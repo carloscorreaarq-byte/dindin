@@ -72,7 +72,7 @@ html,body{
 /* ══════════════════════════════════════════════════
    TELAS
 ══════════════════════════════════════════════════ */
-.screen{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg)}
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg)}
 .screen.hidden{display:none}
 
 /* ══════════════════════════════════════════════════
@@ -172,7 +172,7 @@ html,body{
    LAYOUT APP
 ══════════════════════════════════════════════════ */
 .tab-pane{
-  display:none;position:fixed;top:0;left:0;right:0;
+  display:none;position:absolute;top:0;left:0;right:0;
   bottom:calc(var(--nav-h) + var(--safe-b));
   overflow:hidden;
 }
@@ -378,7 +378,7 @@ html,body{
    NAV BOTTOM — GLASSMORPHISM
 ══════════════════════════════════════════════════ */
 .bottom-nav{
-  position:fixed;bottom:0;left:0;right:0;z-index:100;
+  position:absolute;bottom:0;left:0;right:0;z-index:100;
   height:calc(var(--nav-h) + var(--safe-b));
   background:rgba(250,250,248,.88);
   backdrop-filter:blur(24px) saturate(160%);
@@ -415,7 +415,7 @@ html,body{
    TOAST
 ══════════════════════════════════════════════════ */
 .toast{
-  position:fixed;bottom:calc(var(--nav-h) + var(--safe-b) + 14px);
+  position:absolute;bottom:calc(var(--nav-h) + var(--safe-b) + 14px);
   left:50%;transform:translateX(-50%) translateY(10px);
   background:var(--cafe);color:#fff;
   padding:10px 20px;border-radius:var(--r-pill);
@@ -432,14 +432,14 @@ html,body{
    MODAL LISTA (bottom sheet)
 ══════════════════════════════════════════════════ */
 .modal-overlay{
-  position:fixed;inset:0;background:rgba(42,42,42,.35);z-index:500;
+  position:absolute;inset:0;background:rgba(42,42,42,.35);z-index:500;
   opacity:0;transition:opacity .25s;pointer-events:none;
   backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
 }
 .modal-overlay.show{opacity:1;pointer-events:all}
 
 .list-sheet{
-  position:fixed;left:0;right:0;bottom:0;z-index:510;
+  position:absolute;left:0;right:0;bottom:0;z-index:510;
   background:var(--bg);border-radius:20px 20px 0 0;
   max-height:86vh;display:flex;flex-direction:column;
   transform:translateY(100%);transition:transform .32s cubic-bezier(.32,.72,0,1);
@@ -494,7 +494,7 @@ html,body{
    DETALHE
 ══════════════════════════════════════════════════ */
 .detail-overlay{
-  position:fixed;inset:0;background:rgba(42,42,42,.4);z-index:600;
+  position:absolute;inset:0;background:rgba(42,42,42,.4);z-index:600;
   display:flex;align-items:flex-end;justify-content:center;
   opacity:0;pointer-events:none;transition:opacity .2s;
   backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
@@ -531,7 +531,7 @@ html,body{
 .detail-btn.delete{background:#F8E3E0;color:#C0392B}
 
 .edit-overlay{
-  position:fixed;inset:0;background:rgba(42,42,42,.4);z-index:700;
+  position:absolute;inset:0;background:rgba(42,42,42,.4);z-index:700;
   display:flex;align-items:flex-end;justify-content:center;
   opacity:0;pointer-events:none;transition:opacity .2s;
   backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
@@ -581,7 +581,7 @@ html,body{
 /* ══════════════════════════════════════════════════
    FRAME — MOBILE
 ══════════════════════════════════════════════════ */
-#app-frame{width:100%;height:100%;position:relative}
+#app-frame{width:100%;height:100dvh;min-height:100dvh;position:relative;overflow:hidden}
 
 /* ══════════════════════════════════════════════════
    FRAME — DESKTOP (≥ 600px)
@@ -612,8 +612,13 @@ html,body{
    STANDALONE PWA — ajuste de distribuição
 ══════════════════════════════════════════════════ */
 @media (display-mode:standalone){
+  :root{--nav-h:56px}
   .form-body{padding-top:calc(var(--safe-t) + 8px);gap:8px}
+  .form-body.scrollable{padding-bottom:calc(18px + var(--safe-b))}
   .flex-spacer{flex:1;max-height:16px}
+  .bottom-nav{padding-top:4px}
+  .nav-ico{width:20px;height:20px}
+  .nav-lbl{font-size:9px}
 }
   </style>
 </head>
