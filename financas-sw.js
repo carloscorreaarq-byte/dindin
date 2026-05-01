@@ -1,14 +1,14 @@
-// Service Worker — Finanças Pessoais
-const CACHE = 'financas-v1';
-const ASSETS = [
-  '/financas.html',
-  '/financas-manifest.json',
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js',
+﻿// Service Worker — Finanças Pessoais
+const CACHE = 'financas-v2';
+const APP_SHELL = [
+  './financas.html',
+  './financas-manifest.json',
+  './financas-sw.js',
 ];
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE).then(c => c.addAll(APP_SHELL)).then(() => self.skipWaiting())
   );
 });
 
@@ -21,10 +21,20 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Requisições Supabase sempre vão para a rede
+  if (e.request.method !== 'GET') return;
   if (e.request.url.includes('supabase.co')) return;
 
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    caches.match(e.request).then(cached => {
+      if (cached) return cached;
+      return fetch(e.request).then(response => {
+        const isSameOrigin = new URL(e.request.url).origin === self.location.origin;
+        if (isSameOrigin && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy));
+        }
+        return response;
+      });
+    })
   );
 });

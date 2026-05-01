@@ -1,0 +1,15 @@
+document.addEventListener('DOMContentLoaded', async () => {
+  buildParcelas();
+  buildCats();
+  bindValor('val-gasto-inp','val-gasto-num',v=>S.gastoCents=v);
+  bindValor('val-entrada-inp','val-entrada-num',v=>S.entradaCents=v);
+  setupGastos();
+  setupEntradas();
+  setupConfig();
+  setupNav();
+  setDates();
+  loadConfigForm();
+  await bootSupabase();
+});
+
+if('serviceWorker' in navigator){navigator.serviceWorker.register('./financas-sw.js').catch(()=>{});}
