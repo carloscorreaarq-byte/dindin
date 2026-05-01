@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Finanças">
+  <meta name="theme-color" content="#6366F1">
+  <link rel="manifest" href="financas-manifest.json">
+  <title>Finanças Pessoais</title>
+  <style>
+/* ================================================
+   VARIÁVEIS & RESET
+================================================ */
+
+const SUPABASE_URL      = 'https://beqzurjtawlbloorbijz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_secret_K4g7HHuqZ8Mhn0udLO9EIw_lVM66Cw6';
+
+:root {
+  --primary:        #6366F1;
+  --primary-dark:   #4F46E5;
+  --primary-light:  #EEF2FF;
+  --success:        #22C55E;
+  --success-dark:   #16A34A;
+  --danger:         #EF4444;
+  --warning:        #F97316;
+  --bg:             #F2F2F7;
+  --card:           #FFFFFF;
+  --text:           #1C1C1E;
+  --text-2:         #6B7280;
+  --border:         #E5E7EB;
+  --radius:         14px;
+  --radius-sm:      10px;
+  --nav-h:          72px;
+  --safe-t:         env(safe-area-inset-top, 0px);
+  --safe-b:         env(safe-area-inset-bottom, 0px);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ================================================
+   TELAS
+================================================ */
+.screen { position:fixed; inset:0; display:flex; flex-direction:column; background:var(--bg); }
+.screen.hidden { display:none; }
+
+/* ================================================
+   AUTH
+================================================ */
+.auth-wrap {
+  flex:1; display:flex; flex-direction:column;
+  justify-content:center; align-items:center;
+  padding: calc(var(--safe-t) + 32px) 32px 32px;
+}
+.auth-box { width:100%; max-width:380px; display:flex; flex-direction:column; gap:0; }
+.auth-logo { text-align:center; margin-bottom:48px; }
+.auth-logo-icon { font-size:52px; line-height:1; margin-bottom:10px; }
+.auth-logo-title { font-size:30px; font-weight:700; letter-spacing:-0.5px; }
+.auth-logo-sub { font-size:15px; color:var(--text-2); margin-top:4px; }
+.auth-form { display:flex; flex-direction:column; gap:14px; }
+.auth-err { color:var(--danger); font-size:14px; text-align:center; min-height:20px; }
+
+/* ================================================
+   APP LAYOUT
+================================================ */
+#screen-app { background:var(--bg); }
+
+.tab-pane {
+  display:none; position:fixed;
+  top:0; left:0; right:0;
+  bottom: calc(var(--nav-h) + var(--safe-b));
+  overflow:hidden;
+}
+.tab-pane.active { display:flex; flex-direction:column; }
+
+.form-scroll {
+  flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;
+  padding: calc(var(--safe-t) + 14px) 16px 24px;
+  display:flex; flex-direction:column; gap:14px;
+}
+.form-scroll::-webkit-scrollbar { display:none; }
+
+/* ================================================
+   HEADER APP (minimalista)
+================================================ */
+.app-header {
+  position:fixed; top:0; left:0; right:0; z-index:50;
+  padding-top: var(--safe-t);
+  display:none; /* só visível se precisar de logout */
+}
+
+/* ================================================
+   TOGGLE DONO (Meu / Minha Mãe)
+================================================ */
+.owner-toggle {
+  display:flex; background:var(--border);
+  border-radius:10px; padding:3px;
+  align-self:stretch;
+}
+.owner-btn {
+  flex:1; padding:7px 12px; border:none; border-radius:8px;
+  font-size:14px; font-weight:500; color:var(--text-2);
+  background:transparent; cursor:pointer; transition:all .2s;
+}
+.owner-btn.active {
+  background:var(--card); color:var(--text); font-weight:600;
+  box-shadow:0 1px 3px rgba(0,0,0,.12);
+}
+.owner-btn--mae { font-size:13px; }
+
+/* ================================================
+   VALOR
+================================================ */
+.value-section {
+  background:var(--primary); border-radius:var(--radius);
+  padding:22px 20px 20px; text-align:center;
+  cursor:pointer; user-select:none; position:relative;
+}
+.value-label-top {
+  font-size:12px; font-weight:600; color:rgba(255,255,255,.65);
+  text-transform:uppercase; letter-spacing:.07em; margin-bottom:10px;
+}
+.value-row { display:flex; align-items:baseline; justify-content:center; gap:7px; }
+.value-cur { font-size:22px; font-weight:300; color:rgba(255,255,255,.8); }
+.value-num { font-size:52px; font-weight:700; color:#fff; letter-spacing:-2px; line-height:1; }
+.value-hint { font-size:12px; color:rgba(255,255,255,.5); margin-top:8px; }
+.value-hidden-input {
+  position:absolute; opacity:0; width:1px; height:1px;
+  left:50%; top:50%; pointer-events:none;
+}
+
+/* ================================================
+   CAMPOS
+================================================ */
+.field { display:flex; flex-direction:column; gap:6px; }
+.field--half { flex:1; }
+.field-row { display:flex; gap:10px; }
+
+.field-label {
+  font-size:12px; font-weight:600; color:var(--text-2);
+  text-transform:uppercase; letter-spacing:.05em; padding-left:2px;
+}
+
+.field-input, .field-select {
+  height:52px; background:var(--card);
+  border:1.5px solid var(--border); border-radius:var(--radius-sm);
+  padding:0 14px; font-size:16px; color:var(--text);
+  width:100%; outline:none; transition:border-color .2s;
+  -webkit-appearance:none; appearance:none;
+}
+.field-input:focus, .field-select:focus { border-color:var(--primary); }
+.field-select {
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 14px center;
+  padding-right:38px; cursor:pointer;
+}
+
+/* ================================================
+   PARCELAMENTO
+================================================ */
+.parcelas-wrap { display:flex; flex-wrap:wrap; gap:7px; }
+.parcela-btn {
+  height:38px; padding:0 14px; border:1.5px solid var(--border);
+  border-radius:20px; background:var(--card); font-size:14px;
+  font-weight:500; color:var(--text-2); cursor:pointer; transition:all .15s;
+  flex-shrink:0;
+}
+.parcela-btn.active {
+  background:var(--primary); border-color:var(--primary);
+  color:#fff; font-weight:600;
+}
+
+/* ================================================
+   NECESSIDADE
+================================================ */
+.necessidade-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.nec-btn {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:12px 4px 10px; border:1.5px solid var(--border);
+  border-radius:var(--radius-sm); background:var(--card);
+  cursor:pointer; transition:all .15s;
+}
+.nec-dot {
+  width:26px; height:26px; border-radius:50%;
+  transition:transform .15s;
+}
+.dot-vital    { background:#EF4444; }
+.dot-basico   { background:#F97316; }
+.dot-superfluo{ background:#EAB308; }
+.dot-bobagem  { background:#9CA3AF; }
+.nec-label { font-size:11px; font-weight:500; color:var(--text-2); text-align:center; line-height:1.2; }
+
+.nec-btn.active { box-shadow:0 0 0 2px inset; }
+.nec-btn.active[data-v="1"] { border-color:#EF4444; background:#FEF2F2; box-shadow:none; }
+.nec-btn.active[data-v="2"] { border-color:#F97316; background:#FFF7ED; box-shadow:none; }
+.nec-btn.active[data-v="3"] { border-color:#EAB308; background:#FEFCE8; box-shadow:none; }
+.nec-btn.active[data-v="4"] { border-color:#9CA3AF; background:#F9FAFB; box-shadow:none; }
+.nec-btn.active .nec-dot { transform:scale(1.15); }
+
+/* ================================================
+   BOTÕES
+================================================ */
+.btn {
+  height:52px; border:none; border-radius:var(--radius-sm);
+  font-size:17px; font-weight:600; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  gap:8px; transition:all .15s; width:100%;
+}
+.btn:active { transform:scale(.98); }
+.btn-primary  { background:var(--primary); color:#fff; }
+.btn-primary:active { background:var(--primary-dark); }
+.btn-success  { background:var(--success); color:#fff; }
+.btn-success:active { background:var(--success-dark); }
+.btn-ghost    { background:transparent; color:var(--primary); }
+.btn-lg       { height:58px; font-size:18px; border-radius:var(--radius); }
+.btn:disabled { opacity:.55; pointer-events:none; }
+
+.submit-area { padding-top:4px; padding-bottom:8px; }
+
+/* ================================================
+   NAV BOTTOM
+================================================ */
+.bottom-nav {
+  position:fixed; bottom:0; left:0; right:0; z-index:100;
+  height:calc(var(--nav-h) + var(--safe-b));
+  padding-bottom:var(--safe-b);
+  background:rgba(255,255,255,.92); backdrop-filter:blur(20px) saturate(180%);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  border-top:1px solid rgba(0,0,0,.1);
+  display:flex; align-items:flex-start; padding-top:8px;
+}
+.nav-btn {
+  flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;
+  background:none; border:none; padding:6px 0; cursor:pointer;
+  color:var(--text-2); transition:color .2s;
+}
+.nav-btn.active { color:var(--primary); }
+.nav-ico { width:24px; height:24px; }
+.nav-lbl { font-size:10px; font-weight:600; letter-spacing:.01em; }
+
+/* ================================================
+   LOGOUT BUTTON (flutuante)
+================================================ */
+.btn-logout-float {
+  position:fixed; top:calc(var(--safe-t) + 12px); right:16px; z-index:200;
+  background:var(--card); border:1px solid var(--border);
+  border-radius:20px; padding:6px 14px;
+  font-size:13px; font-weight:500; color:var(--text-2);
+  cursor:pointer; box-shadow:0 1px 4px rgba(0,0,0,.08);
+}
+
+/* ================================================
+   TOAST
+================================================ */
+.toast {
+  position:fixed;
+  bottom:calc(var(--nav-h) + var(--safe-b) + 16px);
+  left:50%; transform:translateX(-50%) translateY(10px);
+  background:#1C1C1E; color:#fff;
+  padding:11px 20px; border-radius:20px;
+  font-size:14px; font-weight:500;
+  opacity:0; transition:all .3s;
+  white-space:nowrap; z-index:300; pointer-events:none;
+}
+.toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+.toast.ok  { background:#15803D; }
+.toast.err { background:#B91C1C; }
+
+/* ================================================
+   OFFLINE BAR
+================================================ */
+.offline-bar {
+  position:fixed; top:var(--safe-t); left:0; right:0; z-index:400;
+  background:var(--warning); color:#fff; text-align:center;
+  padding:8px 16px; font-size:13px; font-weight:600;
+  transform:translateY(-100%); transition:transform .3s;
+}
+.offline-bar.show { transform:translateY(0); }
+
+/* ================================================
+   COMING SOON
+================================================ */
+.coming-soon {
+  flex:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  gap:12px; padding:40px; color:var(--text-2);
+}
+.coming-soon-icon { font-size:48px; }
+.coming-soon h2 { font-size:22px; font-weight:600; color:var(--text); }
+.coming-soon p { font-size:15px; text-align:center; line-height:1.5; }
+
+/* ================================================
+   DIVIDER / LABEL SECTION
+================================================ */
+.section-label {
+  font-size:11px; font-weight:700; color:var(--text-2);
+  text-transform:uppercase; letter-spacing:.08em;
+  padding:4px 2px 0;
+}
+  </style>
+</head>
+<body>
+
+<!-- ===================== AUTH ===================== -->
+<div id="screen-auth" class="screen">
+  <div class="auth-wrap">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <div class="auth-logo-icon">💰</div>
+        <div class="auth-logo-title">Finanças</div>
+        <div class="auth-logo-sub">Controle pessoal</div>
+      </div>
+      <form id="form-auth" class="auth-form">
+        <div class="field">
+          <label class="field-label">E-mail</label>
+          <input type="email" id="inp-email" class="field-input" placeholder="seu@email.com" autocomplete="email" autocapitalize="none">
+        </div>
+        <div class="field">
+          <label class="field-label">Senha</label>
+          <input type="password" id="inp-senha" class="field-input" placeholder="••••••••" autocomplete="current-password">
+        </div>
+        <button type="submit" id="btn-auth" class="btn btn-primary">Entrar</button>
+        <button type="button" id="btn-toggle-mode" class="btn btn-ghost">Criar conta</button>
+        <div class="auth-err" id="auth-err"></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="screen-app" class="screen hidden">
+
+  <!-- Logout flutuante -->
+  <button class="btn-logout-float" id="btn-logout">Sair</button>
+
+  <!-- ===== GASTOS ===== -->
+  <div id="tab-gastos" class="tab-pane active">
+    <div class="form-scroll">
+
+      <!-- Toggle dono -->
+      <div class="owner-toggle">
+        <button class="owner-btn active" data-owner="eu">Meu gasto</button>
+        <button class="owner-btn owner-btn--mae" data-owner="mae">Minha Mãe</button>
+      </div>
+
+      <!-- Valor -->
+      <div class="value-section" id="valor-gasto-section">
+        <div class="value-label-top">Valor</div>
+        <div class="value-row">
+          <span class="value-cur">R$</span>
+          <span class="value-num" id="valor-gasto-display">0,00</span>
+        </div>
+        <div class="value-hint">Toque para digitar</div>
+        <input type="tel" inputmode="numeric" id="valor-gasto-input" class="value-hidden-input" value="" autocomplete="off">
+      </div>
+
+      <!-- Parcelamento -->
+      <div class="field">
+        <label class="field-label">Parcelamento</label>
+        <div class="parcelas-wrap" id="parcelas-wrap">
+          <!-- gerado pelo JS -->
+        </div>
+      </div>
+
+      <!-- Forma + Banco -->
+      <div class="field-row">
+        <div class="field field--half">
+          <label class="field-label">Pagamento</label>
+          <select class="field-select" id="sel-forma">
+            <option value="credito">Crédito</option>
+            <option value="conta_corrente">Conta corrente</option>
+            <option value="transferencia" id="opt-transferencia-gasto" style="display:none">Transferência</option>
+          </select>
+        </div>
+        <div class="field field--half">
+          <label class="field-label">Banco</label>
+          <select class="field-select" id="sel-banco">
+            <option value="XP">XP</option>
+            <option value="Santander">Santander</option>
+            <option value="Nubank">Nubank</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Data -->
+      <div class="field">
+        <label class="field-label">Data e hora</label>
+        <input type="datetime-local" class="field-input" id="inp-data-gasto">
+      </div>
+
+      <!-- Campos exclusivos "Meu" -->
+      <div id="meus-campos">
+
+        <div class="field">
+          <label class="field-label">Categoria</label>
+          <select class="field-select" id="sel-categoria">
+            <option value="">Selecionar...</option>
+          </select>
+        </div>
+
+        <div class="field" id="sub-field" style="display:none">
+          <label class="field-label">Subcategoria</label>
+          <select class="field-select" id="sel-sub">
+            <option value="">Selecionar...</option>
+          </select>
+        </div>
+
+        <div class="field" id="custom-sub-field" style="display:none">
+          <label class="field-label">Especificar (será salvo)</label>
+          <input type="text" class="field-input" id="inp-custom-sub" placeholder="Ex: Sorvete, Rappi...">
+        </div>
+
+        <div class="field">
+          <label class="field-label">Era necessário?</label>
+          <div class="necessidade-grid">
+            <button type="button" class="nec-btn" data-v="1">
+              <div class="nec-dot dot-vital"></div>
+              <span class="nec-label">Vital</span>
+            </button>
+            <button type="button" class="nec-btn" data-v="2">
+              <div class="nec-dot dot-basico"></div>
+              <span class="nec-label">Básico</span>
+            </button>
+            <button type="button" class="nec-btn" data-v="3">
+              <div class="nec-dot dot-superfluo"></div>
+              <span class="nec-label">Supérfluo</span>
+            </button>
+            <button type="button" class="nec-btn" data-v="4">
+              <div class="nec-dot dot-bobagem"></div>
+              <span class="nec-label">Bobagem</span>
+            </button>
+          </div>
+        </div>
+
+      </div><!-- /meus-campos -->
+
+      <div class="submit-area">
+        <button type="button" id="btn-salvar-gasto" class="btn btn-primary btn-lg">Salvar Gasto</button>
+      </div>
+
+    </div>
+  </div><!-- /tab-gastos -->
+
+  <!-- ===== ENTRADAS ===== -->
+  <div id="tab-entradas" class="tab-pane">
+    <div class="form-scroll">
+
+      <!-- Valor -->
+      <div class="value-section" id="valor-entrada-section" style="background:#16A34A">
+        <div class="value-label-top">Valor recebido</div>
+        <div class="value-row">
+          <span class="value-cur">R$</span>
+          <span class="value-num" id="valor-entrada-display">0,00</span>
+        </div>
+        <div class="value-hint">Toque para digitar</div>
+        <input type="tel" inputmode="numeric" id="valor-entrada-input" class="value-hidden-input" value="" autocomplete="off">
+      </div>
+
+      <!-- Origem -->
+      <div class="field">
+        <label class="field-label">Origem</label>
+        <select class="field-select" id="sel-origem">
+          <option value="pro_labore">Pró-labore</option>
+          <option value="adiantamento_lucros">Adiantamento de lucros</option>
+          <option value="bonus">Bônus</option>
+          <option value="reembolso">Reembolso</option>
+          <option value="aluguel">Aluguel</option>
+          <option value="transferencia">Transferência</option>
+          <option value="outro">Outro</option>
+        </select>
+      </div>
+
+      <!-- Campos Transferência -->
+      <div id="transf-fields" style="display:none; display:flex; flex-direction:column; gap:14px;">
+        <div class="field">
+          <label class="field-label">De quem</label>
+          <input type="text" class="field-input" id="inp-origem-de" placeholder="Nome ou origem">
+        </div>
+        <div class="field">
+          <label class="field-label">Por que</label>
+          <input type="text" class="field-input" id="inp-origem-motivo" placeholder="Motivo">
+        </div>
+      </div>
+
+      <!-- Outro -->
+      <div class="field" id="outro-field" style="display:none">
+        <label class="field-label">Especificar</label>
+        <input type="text" class="field-input" id="inp-origem-spec" placeholder="Descreva a origem">
+      </div>
+
+      <!-- Data -->
+      <div class="field">
+        <label class="field-label">Data</label>
+        <input type="date" class="field-input" id="inp-data-entrada">
+      </div>
+
+      <div class="submit-area">
+        <button type="button" id="btn-salvar-entrada" class="btn btn-success btn-lg">Salvar Entrada</button>
+      </div>
+
+    </div>
+  </div><!-- /tab-entradas -->
+
+  <!-- ===== INVESTIMENTOS ===== -->
+  <div id="tab-investimentos" class="tab-pane">
+    <div class="coming-soon">
+      <div class="coming-soon-icon">📈</div>
+      <h2>Em breve</h2>
+      <p>Painel de investimentos em desenvolvimento</p>
+    </div>
+  </div>
+
+  <!-- ===== PARCELAS ===== -->
+  <div id="tab-parcelas" class="tab-pane">
+    <div class="coming-soon">
+      <div class="coming-soon-icon">🏢</div>
+      <h2>Em breve</h2>
+      <p>Gestão do Apartamento Alya SP e Apartamento Rio em desenvolvimento</p>
+    </div>
+  </div>
+
+  <!-- Navegação inferior -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-tab="gastos">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2"/>
+        <path d="M12 6v6l4 2"/>
+      </svg>
+      <span class="nav-lbl">Gastos</span>
+    </button>
+    <button class="nav-btn" data-tab="entradas">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="1" x2="12" y2="23"/>
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+      </svg>
+      <span class="nav-lbl">Entradas</span>
+    </button>
+    <button class="nav-btn" data-tab="investimentos">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+        <polyline points="17 6 23 6 23 12"/>
+      </svg>
+      <span class="nav-lbl">Invest.</span>
+    </button>
+    <button class="nav-btn" data-tab="parcelas">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <path d="M3 9h18M9 21V9"/>
+      </svg>
+      <span class="nav-lbl">Parcelas</span>
+    </button>
+  </nav>
+
+</div><!-- /screen-app -->
+
+<!-- Toast & Offline -->
+<div class="toast" id="toast"></div>
+<div class="offline-bar" id="offline-bar">Sem conexão — dados salvos localmente</div>
+
+<!-- Supabase SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+<script>
+/* ================================================
+   CONFIGURAÇÃO SUPABASE
+   Substitua pelas suas credenciais do projeto Supabase
+================================================ */
+const SUPABASE_URL     = 'COLE_SUA_SUPABASE_URL_AQUI';
+const SUPABASE_ANON_KEY= 'COLE_SUA_SUPABASE_ANON_KEY_AQUI';
+
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ================================================
+   CATEGORIAS & SUBCATEGORIAS
+================================================ */
+const CATS = [
+  { id:'alimentacao', nome:'Alimentação',  subs:['Mercado','Restaurante','Delivery','Café','Besteira'],                               outros:false },
+  { id:'transporte',  nome:'Transporte',   subs:['Uber/99','Passagem aérea'],                                                          outros:true  },
+  { id:'lazer',       nome:'Lazer',        subs:['Festa','Bebida','Ilícitos','Cinema'],                                               outros:true  },
+  { id:'saude',       nome:'Saúde',        subs:['Psicóloga','Consulta','Exame','Farmácia'],                                          outros:false },
+  { id:'fitness',     nome:'Fitness',      subs:['Academia','Natação','Instrutor','Médico','Bomba','Manipulados','Tirzepatida'],       outros:false },
+  { id:'moradia',     nome:'Moradia',      subs:['Aluguel','Gás','Energia','Produtos de Casa','Faxina','Serviços gerais','Taxas extras'], outros:false },
+  { id:'compras',     nome:'Compras',      subs:['Roupas','Acessórios','Calçados','Decoração','Eletrônicos'],                         outros:false },
+  { id:'servicos',    nome:'Serviços',     subs:['Assinaturas','Internet/Celular','Aplicativos','Programas'],                         outros:false },
+  { id:'pessoal',     nome:'Pessoal',      subs:['Cabeleireiro','Higiene'],                                                          outros:true  },
+];
+
+/* ================================================
+   ESTADO DA APLICAÇÃO
+================================================ */
+const S = {
+  user:         null,
+  owner:        'eu',
+  gastoCents:   0,
+  entradaCents: 0,
+  parcela:      'a_vista',
+  necessidade:  null,
+  catId:        null,
+  customSubs:   JSON.parse(localStorage.getItem('customSubs') || '{}'),
+  offlineQueue: JSON.parse(localStorage.getItem('offlineQ')   || '[]'),
+  online:       navigator.onLine,
+};
+
+/* ================================================
+   BOOT
+================================================ */
+document.addEventListener('DOMContentLoaded', async () => {
+  buildParcelasUI();
+  buildCategoriasUI();
+  setupValorInputs();
+  setupGastosForm();
+  setupEntradasForm();
+  setupNav();
+  setupNetworkMonitor();
+  setDefaultDates();
+
+  // Auth listener
+  db.auth.onAuthStateChange((_evt, session) => {
+    if (session) { S.user = session.user; showApp(); loadCustomSubsFromDB(); }
+    else         { showAuth(); }
+  });
+
+  const { data:{ session } } = await db.auth.getSession();
+  if (!session) showAuth();
+});
+
+/* ================================================
+   AUTH UI
+================================================ */
+let authMode = 'login'; // 'login' | 'register'
+
+document.getElementById('form-auth').addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = document.getElementById('inp-email').value.trim();
+  const pwd   = document.getElementById('inp-senha').value;
+  const btn   = document.getElementById('btn-auth');
+  const err   = document.getElementById('auth-err');
+
+  btn.disabled = true; btn.textContent = '...';
+  err.textContent = '';
+
+  try {
+    let res;
+    if (authMode === 'register') {
+      res = await db.auth.signUp({ email, password: pwd });
+      if (res.error) throw res.error;
+      err.style.color = '#16A34A';
+      err.textContent = 'Conta criada! Verifique seu e-mail para confirmar.';
+    } else {
+      res = await db.auth.signInWithPassword({ email, password: pwd });
+      if (res.error) throw res.error;
+    }
+  } catch(ex) {
+    err.style.color = '#EF4444';
+    err.textContent = traduzErroAuth(ex.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = authMode === 'login' ? 'Entrar' : 'Criar conta';
+  }
+});
+
+document.getElementById('btn-toggle-mode').addEventListener('click', () => {
+  authMode = authMode === 'login' ? 'register' : 'login';
+  document.getElementById('btn-auth').textContent         = authMode === 'login' ? 'Entrar' : 'Criar conta';
+  document.getElementById('btn-toggle-mode').textContent = authMode === 'login' ? 'Criar conta' : 'Já tenho conta';
+  document.getElementById('auth-err').textContent = '';
+});
+
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  await db.auth.signOut();
+  showAuth();
+});
+
+function showAuth() {
+  document.getElementById('screen-auth').classList.remove('hidden');
+  document.getElementById('screen-app').classList.add('hidden');
+}
+function showApp() {
+  document.getElementById('screen-auth').classList.add('hidden');
+  document.getElementById('screen-app').classList.remove('hidden');
+}
+function traduzErroAuth(m) {
+  if (m.includes('Invalid login')) return 'E-mail ou senha incorretos';
+  if (m.includes('already registered')) return 'E-mail já cadastrado';
+  if (m.includes('Password should')) return 'Senha muito curta (mín. 6 caracteres)';
+  if (m.includes('Unable to validate')) return 'E-mail inválido';
+  return m;
+}
+
+/* ================================================
+   NAVEGAÇÃO
+================================================ */
+function setupNav() {
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(`tab-${tab}`).classList.add('active');
+    });
+  });
+}
+
+/* ================================================
+   DATAS DEFAULT
+================================================ */
+function setDefaultDates() {
+  const now     = new Date();
+  const local   = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString();
+  document.getElementById('inp-data-gasto').value   = local.slice(0, 16);
+  document.getElementById('inp-data-entrada').value = local.slice(0, 10);
+}
+
+/* ================================================
+   INPUT DE VALOR (estilo caixa registradora)
+================================================ */
+function setupValorInputs() {
+  bindValorInput('valor-gasto-input',   'valor-gasto-display',   v => { S.gastoCents   = v; });
+  bindValorInput('valor-entrada-input', 'valor-entrada-display', v => { S.entradaCents = v; });
+
+  // Tap na seção abre o teclado
+  document.getElementById('valor-gasto-section').addEventListener('click', () => {
+    document.getElementById('valor-gasto-input').focus();
+  });
+  document.getElementById('valor-entrada-section').addEventListener('click', () => {
+    document.getElementById('valor-entrada-input').focus();
+  });
+}
+
+function bindValorInput(inputId, displayId, onChangeCb) {
+  const inp = document.getElementById(inputId);
+  const disp= document.getElementById(displayId);
+
+  inp.addEventListener('input', () => {
+    const digits = inp.value.replace(/\D/g, '');
+    const cents  = parseInt(digits || '0', 10);
+    disp.textContent = formatCents(cents);
+    onChangeCb(cents);
+  });
+
+  // Garante teclado numérico no iOS
+  inp.setAttribute('inputmode', 'numeric');
+  inp.setAttribute('pattern', '[0-9]*');
+}
+
+function formatCents(cents) {
+  const reais = Math.floor(cents / 100);
+  const ctvs  = cents % 100;
+  return reais.toLocaleString('pt-BR') + ',' + String(ctvs).padStart(2, '0');
+}
+
+/* ================================================
+   PARCELAMENTO UI
+================================================ */
+function buildParcelasUI() {
+  const wrap = document.getElementById('parcelas-wrap');
+  const opts = ['À vista', '1x','2x','3x','4x','5x','6x','7x','8x','9x','10x','11x','12x'];
+  const vals = ['a_vista','1x','2x','3x','4x','5x','6x','7x','8x','9x','10x','11x','12x'];
+
+  opts.forEach((label, i) => {
+    const btn = document.createElement('button');
+    btn.type      = 'button';
+    btn.className = 'parcela-btn' + (i === 0 ? ' active' : '');
+    btn.dataset.v = vals[i];
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.parcela-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      S.parcela = vals[i];
+    });
+    wrap.appendChild(btn);
+  });
+}
+
+/* ================================================
+   GASTOS FORM
+================================================ */
+function setupGastosForm() {
+  // Toggle dono
+  document.querySelectorAll('.owner-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.owner-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      S.owner = btn.dataset.owner;
+      atualizarOwnerUI();
+    });
+  });
+
+  // Necessidade
+  document.querySelectorAll('.nec-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nec-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      S.necessidade = parseInt(btn.dataset.v);
+    });
+  });
+
+  // Categoria
+  document.getElementById('sel-categoria').addEventListener('change', onCatChange);
+  document.getElementById('sel-sub').addEventListener('change', onSubChange);
+
+  // Salvar
+  document.getElementById('btn-salvar-gasto').addEventListener('click', salvarGasto);
+
+  // Aplicar presets salvos
+  aplicarPresets();
+}
+
+function atualizarOwnerUI() {
+  const isMae = S.owner === 'mae';
+  document.getElementById('meus-campos').style.display = isMae ? 'none' : '';
+
+  const optTransf = document.getElementById('opt-transferencia-gasto');
+  if (isMae) {
+    optTransf.style.display = '';
+  } else {
+    optTransf.style.display = 'none';
+    const sel = document.getElementById('sel-forma');
+    if (sel.value === 'transferencia') sel.value = 'credito';
+  }
+}
+
+function buildCategoriasUI() {
+  const sel = document.getElementById('sel-categoria');
+  CATS.forEach(cat => {
+    const opt = document.createElement('option');
+    opt.value = cat.id;
+    opt.textContent = cat.nome;
+    sel.appendChild(opt);
+  });
+}
+
+function onCatChange() {
+  const catId  = document.getElementById('sel-categoria').value;
+  S.catId      = catId || null;
+  const subField = document.getElementById('sub-field');
+  const custField= document.getElementById('custom-sub-field');
+
+  if (!catId) { subField.style.display = 'none'; custField.style.display = 'none'; return; }
+
+  const cat = CATS.find(c => c.id === catId);
+  const sel = document.getElementById('sel-sub');
+  sel.innerHTML = '<option value="">Selecionar...</option>';
+
+  // Subcategorias fixas
+  cat.subs.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s;
+    sel.appendChild(o);
+  });
+
+  // Subcategorias customizadas salvas
+  (S.customSubs[catId] || []).forEach(s => {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s + ' ✦';
+    sel.appendChild(o);
+  });
+
+  // Opção "Outros" se aplicável
+  if (cat.outros) {
+    const o = document.createElement('option');
+    o.value = '__outros__'; o.textContent = 'Outros...';
+    sel.appendChild(o);
+  }
+
+  subField.style.display = '';
+  custField.style.display = 'none';
+}
+
+function onSubChange() {
+  const val  = document.getElementById('sel-sub').value;
+  const cf   = document.getElementById('custom-sub-field');
+  const cinp = document.getElementById('inp-custom-sub');
+
+  if (val === '__outros__') {
+    cf.style.display = '';
+    setTimeout(() => cinp.focus(), 50);
+  } else {
+    cf.style.display = 'none';
+    cinp.value = '';
+  }
+}
+
+function getSubcategoriaFinal() {
+  const v = document.getElementById('sel-sub').value;
+  if (v === '__outros__') {
+    return document.getElementById('inp-custom-sub').value.trim() || null;
+  }
+  return v || null;
+}
+
+async function persistirCustomSub(catId, nome) {
+  if (!nome) return;
+  if (!S.customSubs[catId]) S.customSubs[catId] = [];
+  if (S.customSubs[catId].includes(nome)) return;
+
+  S.customSubs[catId].push(nome);
+  localStorage.setItem('customSubs', JSON.stringify(S.customSubs));
+
+  if (S.online && S.user) {
+    await db.from('subcategorias_custom').upsert(
+      { user_id: S.user.id, categoria: catId, nome },
+      { onConflict: 'user_id,categoria,nome' }
+    ).then(({ error }) => { if (error) console.warn('custom sub sync:', error); });
+  }
+}
+
+async function loadCustomSubsFromDB() {
+  if (!S.online || !S.user) return;
+  const { data } = await db.from('subcategorias_custom')
+    .select('categoria,nome')
+    .eq('user_id', S.user.id);
+
+  if (data) {
+    data.forEach(r => {
+      if (!S.customSubs[r.categoria]) S.customSubs[r.categoria] = [];
+      if (!S.customSubs[r.categoria].includes(r.nome)) {
+        S.customSubs[r.categoria].push(r.nome);
+      }
+    });
+    localStorage.setItem('customSubs', JSON.stringify(S.customSubs));
+  }
+}
+
+function aplicarPresets() {
+  const p = JSON.parse(localStorage.getItem('gastoPresets') || '{}');
+  if (p.forma) document.getElementById('sel-forma').value = p.forma;
+  if (p.banco) document.getElementById('sel-banco').value = p.banco;
+}
+
+function salvarPresets() {
+  localStorage.setItem('gastoPresets', JSON.stringify({
+    forma: document.getElementById('sel-forma').value,
+    banco: document.getElementById('sel-banco').value,
+  }));
+}
+
+async function salvarGasto() {
+  if (S.gastoCents === 0) { toast('Digite o valor', 'err'); return; }
+
+  const isEu  = S.owner === 'eu';
+  const sub   = isEu ? getSubcategoriaFinal() : null;
+  const isCustom = isEu && document.getElementById('sel-sub').value === '__outros__';
+
+  if (isEu && !S.catId) { toast('Selecione uma categoria', 'err'); return; }
+
+  if (isCustom && sub) await persistirCustomSub(S.catId, sub);
+
+  const catNome = isEu ? (CATS.find(c => c.id === S.catId)?.nome || null) : null;
+
+  const gasto = {
+    user_id:         S.user?.id,
+    dono:            S.owner,
+    valor:           S.gastoCents / 100,
+    tipo_pagamento:  S.parcela,
+    forma_pagamento: document.getElementById('sel-forma').value,
+    banco:           document.getElementById('sel-banco').value,
+    data:            document.getElementById('inp-data-gasto').value,
+    categoria:       catNome,
+    subcategoria:    sub,
+    necessidade:     isEu ? S.necessidade : null,
+  };
+
+  const btn = document.getElementById('btn-salvar-gasto');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+
+  try {
+    if (S.online && S.user) {
+      const { error } = await db.from('gastos').insert(gasto);
+      if (error) throw error;
+      toast('Gasto salvo! ✓', 'ok');
+    } else {
+      enqueueOffline('gastos', gasto);
+      toast('Salvo localmente', 'ok');
+    }
+    salvarPresets();
+    resetGastosForm();
+  } catch(ex) {
+    console.error(ex);
+    enqueueOffline('gastos', gasto);
+    toast('Erro — salvo localmente', 'ok');
+    resetGastosForm();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar Gasto';
+  }
+}
+
+function resetGastosForm() {
+  S.gastoCents = 0;
+  document.getElementById('valor-gasto-input').value = '';
+  document.getElementById('valor-gasto-display').textContent = '0,00';
+
+  document.querySelectorAll('.parcela-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.parcela-btn[data-v="a_vista"]').classList.add('active');
+  S.parcela = 'a_vista';
+
+  document.querySelectorAll('.nec-btn').forEach(b => b.classList.remove('active'));
+  S.necessidade = null;
+
+  document.getElementById('sel-categoria').value = '';
+  document.getElementById('sub-field').style.display = 'none';
+  document.getElementById('custom-sub-field').style.display = 'none';
+  S.catId = null;
+
+  setDefaultDates();
+  document.querySelector('#tab-gastos .form-scroll').scrollTop = 0;
+}
+
+/* ================================================
+   ENTRADAS FORM
+================================================ */
+function setupEntradasForm() {
+  document.getElementById('sel-origem').addEventListener('change', onOrigemChange);
+  document.getElementById('btn-salvar-entrada').addEventListener('click', salvarEntrada);
+}
+
+function onOrigemChange() {
+  const v = document.getElementById('sel-origem').value;
+  document.getElementById('transf-fields').style.display = v === 'transferencia' ? 'flex' : 'none';
+  document.getElementById('outro-field').style.display   = v === 'outro' ? '' : 'none';
+}
+
+// Corrigir display do transf-fields (estava com dois display no HTML)
+document.getElementById('transf-fields').style.display = 'none';
+
+async function salvarEntrada() {
+  if (S.entradaCents === 0) { toast('Digite o valor', 'err'); return; }
+
+  const origem = document.getElementById('sel-origem').value;
+  const entrada = {
+    user_id:              S.user?.id,
+    valor:                S.entradaCents / 100,
+    origem,
+    origem_de:            origem === 'transferencia' ? document.getElementById('inp-origem-de').value.trim()    : null,
+    origem_motivo:        origem === 'transferencia' ? document.getElementById('inp-origem-motivo').value.trim() : null,
+    origem_especificacao: origem === 'outro'         ? document.getElementById('inp-origem-spec').value.trim()  : null,
+    data:                 document.getElementById('inp-data-entrada').value,
+  };
+
+  const btn = document.getElementById('btn-salvar-entrada');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+
+  try {
+    if (S.online && S.user) {
+      const { error } = await db.from('entradas').insert(entrada);
+      if (error) throw error;
+      toast('Entrada salva! ✓', 'ok');
+    } else {
+      enqueueOffline('entradas', entrada);
+      toast('Salvo localmente', 'ok');
+    }
+    resetEntradasForm();
+  } catch(ex) {
+    console.error(ex);
+    enqueueOffline('entradas', entrada);
+    toast('Erro — salvo localmente', 'ok');
+    resetEntradasForm();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar Entrada';
+  }
+}
+
+function resetEntradasForm() {
+  S.entradaCents = 0;
+  document.getElementById('valor-entrada-input').value = '';
+  document.getElementById('valor-entrada-display').textContent = '0,00';
+  document.getElementById('sel-origem').value = 'pro_labore';
+  document.getElementById('transf-fields').style.display = 'none';
+  document.getElementById('outro-field').style.display   = 'none';
+  document.getElementById('inp-origem-de').value      = '';
+  document.getElementById('inp-origem-motivo').value  = '';
+  document.getElementById('inp-origem-spec').value    = '';
+  setDefaultDates();
+  document.querySelector('#tab-entradas .form-scroll').scrollTop = 0;
+}
+
+/* ================================================
+   FILA OFFLINE
+================================================ */
+function enqueueOffline(tabela, dados) {
+  S.offlineQueue.push({ tabela, dados, ts: Date.now() });
+  localStorage.setItem('offlineQ', JSON.stringify(S.offlineQueue));
+}
+
+async function syncOfflineQueue() {
+  if (!S.user || S.offlineQueue.length === 0) return;
+
+  const q = [...S.offlineQueue];
+  S.offlineQueue = [];
+  localStorage.setItem('offlineQ', '[]');
+
+  for (const item of q) {
+    const { error } = await db.from(item.tabela).insert(item.dados);
+    if (error) S.offlineQueue.push(item);
+  }
+
+  localStorage.setItem('offlineQ', JSON.stringify(S.offlineQueue));
+  if (S.offlineQueue.length === 0 && q.length > 0) {
+    toast(`${q.length} registro(s) sincronizado(s)`, 'ok');
+  }
+}
+
+/* ================================================
+   REDE
+================================================ */
+function setupNetworkMonitor() {
+  const bar = document.getElementById('offline-bar');
+  window.addEventListener('online',  () => { S.online = true;  bar.classList.remove('show'); syncOfflineQueue(); });
+  window.addEventListener('offline', () => { S.online = false; bar.classList.add('show'); });
+  if (!navigator.onLine) bar.classList.add('show');
+}
+
+/* ================================================
+   TOAST
+================================================ */
+let _toastTimer;
+function toast(msg, tipo = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = `toast show ${tipo}`;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.className = 'toast'; }, 3000);
+}
+
+/* ================================================
+   SERVICE WORKER
+================================================ */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('financas-sw.js')
+    .catch(e => console.log('SW não registrado (local):', e));
+}
+</script>
+</body>
+</html>
