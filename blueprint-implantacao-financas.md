@@ -60,7 +60,7 @@ Entram seus gastos, entradas, transferencias, reembolsos e classificacoes analit
 
 ### 2. Casa atual e sublocacao
 
-Entram todos os gastos do apartamento atual alugado e a receita fixa de sublocacao, para medir resultado mensal e tendencia.
+Entram todos os gastos do apartamento atual alugado e a receita de sublocacao, usando uma media de referencia que deve ser validada mes a mes pelas entradas em `Aluguel`.
 
 ### 3. Alya
 
@@ -402,13 +402,15 @@ Regras analiticas:
 
 Objetivo:
 
-medir se a sublocacao fixa esta cobrindo o custo real da moradia.
+medir se o aluguel efetivamente validado no mes esta cobrindo o custo real da moradia, usando uma media de sublocacao apenas como referencia.
 
 Metricas:
 
 - custo total mensal da casa atual
-- receita mensal de sublocacao
-- resultado mensal = sublocacao - custo real
+- media mensal de sublocacao cadastrada
+- aluguel validado no mes pelas entradas em `Aluguel`
+- resultado mensal validado = aluguel do mes - custo real
+- resultado mensal provisiorio = media de referencia - custo real quando faltar validacao
 - media movel de 3 meses
 - media movel de 6 meses
 - percentual de variacao de custo
@@ -416,7 +418,10 @@ Metricas:
 
 Regra central:
 
-- se `resultado mensal < 0` por recorrencia ou se a media movel ficar negativa, o painel deve sugerir revisao do valor fixo
+- a media de sublocacao salva nao substitui o aluguel real do mes; ela e apenas referencia
+- cada mes deve ser conciliado com ao menos uma entrada classificada como `Aluguel`
+- se nao houver entrada de `Aluguel`, o painel pode exibir resultado provisiorio pela media, mas deve sinalizar que o mes ainda nao foi validado
+- se o `resultado mensal validado < 0` por recorrencia ou se a media movel ficar negativa, o painel deve sugerir revisao da media/valor praticado
 
 ### Dashboard da Mae
 
@@ -603,6 +608,8 @@ Registro de execucao:
 - `2026-05-01`: refinado o visual dos botoes principais de salvar, com altura maior, tipografia mais forte e presenca mais consistente nas telas de gastos, entradas, parcelas e edicao; o cache do app foi atualizado para `financas-v13`
 - `2026-05-01`: reforcada a resiliencia de leitura de dados: o `Resumo` passou a cair automaticamente para `gastos` + `entradas` quando `lancamentos` ou a view temporal nao estiverem disponiveis, e as listagens passaram a tentar fallback via `lancamentos` quando o legado vier vazio; o cache do app foi atualizado para `financas-v14`
 - `2026-05-01`: adicionados timeout explicito nas leituras/escritas principais do Supabase e cache local dos ultimos dados de resumo, gastos e entradas, permitindo fallback visivel quando a conexao oscilar; o cache do app foi atualizado para `financas-v15`
+- `2026-05-01`: concluida a primeira rodada da Fase 3 - Casa atual: gastos de `Moradia` ganharam reforco visual de contexto, o `Resumo` passou a exibir painel proprio de custo real versus sublocacao fixa, foi criado o fluxo de configuracao da sublocacao no app com fallback local e sincronizacao opcional via `contratos_sublocacao`, e o projeto recebeu o script `financas-fase3-casa-atual.sql`; o cache do app foi atualizado para `financas-v16`
+- `2026-05-01`: refinada a regra da Casa atual: o valor salvo da sublocacao passou a ser tratado como media de referencia, e cada mes deve ser validado pelas entradas classificadas como `Aluguel`; quando a validacao faltar, o painel mostra leitura provisoria pela media; o cache do app foi atualizado para `financas-v17`
 
 ### Fase 0 - Saneamento da base atual
 
@@ -634,9 +641,9 @@ Registro de execucao:
 
 ### Fase 3 - Casa atual
 
-- [ ] implementar `contexto = casa_atual`
-- [ ] registrar sublocacao fixa
-- [ ] criar analise de resultado mensal da casa
+- [x] implementar `contexto = casa_atual`
+- [x] registrar sublocacao fixa
+- [x] criar analise de resultado mensal da casa
 
 ### Fase 4 - Alya
 
@@ -683,8 +690,8 @@ O sistema so deve ser considerado pronto para uso analitico quando:
 
 O melhor proximo passo de implementacao e este:
 
-1. complementar o modelo de dados para guardar `data_contratacao` e `mes_origem_compra`
-2. criar o fluxo de cadastro manual de parcelamentos ativos ja existentes no cartao
-3. ajustar o dashboard para separar `custo herdado`, `gasto novo no mes` e `gasto jogado para o futuro`
+1. cadastrar o fluxo base do contrato do Alya
+2. criar o cadastro do historico de parcelas pagas do Alya
+3. implementar o primeiro painel de saldo, faltante e projecao do Alya
 
-Se quisermos seguir com eficiencia, a proxima entrega pratica deve ser a especificacao SQL complementar de parcelamentos ativos e origem temporal, seguida do formulario de cadastro dessas parcelas em aberto.
+Se quisermos seguir com eficiencia, a proxima entrega pratica deve ser a modelagem SQL inicial do Alya, seguida da tela de cadastro do fluxo contratual base.

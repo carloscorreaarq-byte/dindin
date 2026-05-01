@@ -2,6 +2,10 @@ const APP_NAME = 'dindin';
 const SUPABASE_CONFIG_KEY = 'dindin_supabase_config';
 const LEGACY_SUPABASE_CONFIG_KEY = 'financas_supabase_config';
 const SUPABASE_AUTH_STORAGE_KEY = 'dindin-auth';
+const DASHBOARD_CACHE_KEY = 'dindin_dashboard_cache';
+const GASTOS_CACHE_KEY = 'dindin_gastos_cache';
+const ENTRADAS_CACHE_KEY = 'dindin_entradas_cache';
+const CASA_ATUAL_CONFIG_KEY = 'dindin_casa_atual_config';
 const EMBEDDED_SUPABASE_CONFIG = Object.freeze({
   url: 'https://beqzurjtawlbloorbijz.supabase.co',
   anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJlcXp1cmp0YXdsYmxvb3JiaWp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1OTkyMDIsImV4cCI6MjA5MzE3NTIwMn0.hlEgHsH4crMN7xXRuuFK6GjaBpLrWYvS4Y0S3NFFer8',

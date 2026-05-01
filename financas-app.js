@@ -71,6 +71,7 @@ function bindAuthListener(){
       S.user=session.user;
       showApp();
       await loadCustomSubs();
+      await loadCasaAtualConfig();
       refreshDashboardIfVisible();
     }else showAuth();
   });
@@ -102,6 +103,7 @@ async function bootSupabase(){
       S.user=session.user;
       showApp();
       await loadCustomSubs();
+      await loadCasaAtualConfig();
       refreshDashboardIfVisible();
     }else showAuth();
     syncConfigUi();
@@ -130,6 +132,7 @@ function setupConfig(){
 
 function setupDashboard(){
   q('btn-dashboard-refresh').addEventListener('click',()=>refreshDashboard());
+  setupCasaAtual();
 }
 
 async function ensureActiveSession(){
@@ -146,6 +149,186 @@ async function ensureActiveSession(){
   S.user=null;
   showAuth();
   return false;
+}
+
+function cacheKeyForUser(baseKey){
+  return `${baseKey}:${S.user?.id || 'anon'}`;
+}
+
+function writeCache(baseKey,value){
+  try{
+    localStorage.setItem(cacheKeyForUser(baseKey),JSON.stringify(value));
+  }catch{}
+}
+
+function readCache(baseKey,fallback=null){
+  try{
+    const raw=localStorage.getItem(cacheKeyForUser(baseKey));
+    return raw?JSON.parse(raw):fallback;
+  }catch{
+    return fallback;
+  }
+}
+
+async function withTimeout(promise,ms,label='operacao'){
+  let handle;
+  const timeout=new Promise((_,reject)=>{
+    handle=setTimeout(()=>reject(new Error(`Tempo esgotado ao acessar ${label}.`)),ms);
+  });
+  try{
+    return await Promise.race([promise,timeout]);
+  }finally{
+    clearTimeout(handle);
+  }
+}
+
+function currentMonthStart(){
+  const now=new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+}
+
+function normalizeMonthStart(value){
+  if(!value) return null;
+  const text=String(value);
+  if(/^\d{4}-\d{2}$/.test(text)) return `${text}-01`;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(text)) return `${text.slice(0,7)}-01`;
+  return null;
+}
+
+function normalizeCasaAtualConfig(raw){
+  const valor=Number(raw?.valor_mensal_fixo ?? raw?.valorMensalFixo ?? 0);
+  const normalized={
+    descricao:(raw?.descricao || 'Media da sublocacao atual').toString().trim() || 'Media da sublocacao atual',
+    valor_mensal_fixo:Number.isFinite(valor) && valor > 0 ? Number(valor.toFixed(2)) : null,
+    inicio_vigencia:normalizeMonthStart(raw?.inicio_vigencia || raw?.inicioVigencia),
+    ativo:Boolean((raw?.ativo ?? true) && Number.isFinite(valor) && valor > 0),
+  };
+  if(!normalized.inicio_vigencia && normalized.ativo){
+    normalized.inicio_vigencia=currentMonthStart();
+  }
+  return normalized;
+}
+
+function getCasaAtualConfig(){
+  return normalizeCasaAtualConfig(readCache(CASA_ATUAL_CONFIG_KEY,{}));
+}
+
+function setCasaAtualConfigLocal(config){
+  const normalized=normalizeCasaAtualConfig(config);
+  writeCache(CASA_ATUAL_CONFIG_KEY,normalized);
+  S.casaAtualConfig=normalized;
+  return normalized;
+}
+
+async function loadCasaAtualConfig(){
+  const local=getCasaAtualConfig();
+  S.casaAtualConfig=local;
+  if(!db || !S.user) return local;
+  try{
+    const res=await withTimeout(
+      db
+        .from('contratos_sublocacao')
+        .select('descricao,valor_mensal_fixo,inicio_vigencia,ativo')
+        .eq('user_id',S.user.id)
+        .eq('ativo',true)
+        .order('inicio_vigencia',{ascending:false})
+        .limit(1),
+      8000,
+      'configuracao da casa atual'
+    );
+    if(!res.error && (res.data||[]).length){
+      return setCasaAtualConfigLocal(res.data[0]);
+    }
+  }catch{}
+  return local;
+}
+
+async function persistCasaAtualConfig(config){
+  const normalized=setCasaAtualConfigLocal(config);
+  if(!db || !S.user) return { remote:false, config:normalized };
+  try{
+    const disable=await withTimeout(
+      db.from('contratos_sublocacao').update({ativo:false}).eq('user_id',S.user.id).eq('ativo',true),
+      8000,
+      'desativacao da sublocacao anterior'
+    );
+    if(disable.error) throw disable.error;
+    if(normalized.ativo && normalized.valor_mensal_fixo){
+      const insert=await withTimeout(
+        db.from('contratos_sublocacao').insert({
+          user_id:S.user.id,
+          descricao:normalized.descricao,
+          valor_mensal_fixo:normalized.valor_mensal_fixo,
+          inicio_vigencia:normalized.inicio_vigencia || currentMonthStart(),
+          ativo:true,
+        }),
+        8000,
+        'salvamento da sublocacao'
+      );
+      if(insert.error) throw insert.error;
+    }
+    return { remote:true, config:normalized };
+  }catch{
+    return { remote:false, config:normalized };
+  }
+}
+
+function openCasaAtualConfig(){
+  const config=S.casaAtualConfig || getCasaAtualConfig();
+  q('casa-descricao').value=config.descricao || 'Media da sublocacao atual';
+  q('casa-valor-fixo').value=config.valor_mensal_fixo ? Number(config.valor_mensal_fixo).toFixed(2) : '';
+  q('casa-inicio-vigencia').value=config.inicio_vigencia ? config.inicio_vigencia.slice(0,7) : '';
+  q('casa-overlay').classList.add('show');
+}
+
+function closeCasaAtualConfig(){
+  q('casa-overlay').classList.remove('show');
+}
+
+async function saveCasaAtualConfig(){
+  const btn=q('casa-salvar');
+  btn.disabled=true;
+  btn.textContent='Salvando...';
+  try{
+    const valor=Number(q('casa-valor-fixo').value||0);
+    const config={
+      descricao:q('casa-descricao').value.trim() || 'Media da sublocacao atual',
+      valor_mensal_fixo:valor > 0 ? valor : null,
+      inicio_vigencia:normalizeMonthStart(q('casa-inicio-vigencia').value) || currentMonthStart(),
+      ativo:valor > 0,
+    };
+    const result=await persistCasaAtualConfig(config);
+    closeCasaAtualConfig();
+    toast(
+      result.remote ? 'Media de sublocacao salva!' : 'Media salva neste dispositivo.',
+      'ok'
+    );
+    refreshDashboardIfVisible();
+  }catch(ex){
+    toast(`Nao foi possivel salvar a media da sublocacao.${ex?.message?` ${ex.message}`:''}`,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Salvar media';
+  }
+}
+
+function setupCasaAtual(){
+  if(!q('btn-casa-config')) return;
+  q('btn-casa-config').addEventListener('click',openCasaAtualConfig);
+  q('casa-cancelar').addEventListener('click',closeCasaAtualConfig);
+  q('casa-overlay').addEventListener('click',e=>{
+    if(e.target===q('casa-overlay')) closeCasaAtualConfig();
+  });
+  q('casa-salvar').addEventListener('click',saveCasaAtualConfig);
+}
+
+function buildMonthKeys(fromDate,count=6){
+  const keys=[];
+  for(let i=0;i<count;i++){
+    const d=new Date(fromDate.getFullYear(),fromDate.getMonth()+i,1);
+    keys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`);
+  }
+  return keys;
 }
 
 function monthInputToDate(value){
@@ -385,6 +568,7 @@ function setupGastos(){
       q('meus-campos').style.display=S.owner==='mae'?'none':'flex';
       q('opt-transf').style.display=S.owner==='mae'?'':'none';
       if(S.owner==='eu'&&q('sel-forma').value==='transferencia')q('sel-forma').value='credito';
+      syncGastoContextHint();
     });
   });
   document.querySelectorAll('.nec-btn').forEach(btn=>{
@@ -400,6 +584,7 @@ function setupGastos(){
   const p=JSON.parse(localStorage.getItem('gPresets')||'{}');
   if(p.forma)q('sel-forma').value=p.forma;
   if(p.banco)q('sel-banco').value=p.banco;
+  syncGastoContextHint();
 }
 
 function buildCats(){
@@ -412,11 +597,19 @@ function buildCats(){
   });
 }
 
+function syncGastoContextHint(){
+  const note=q('gasto-contexto-note');
+  if(!note) return;
+  const show=S.owner==='eu' && S.catId==='moradia';
+  note.classList.toggle('show',show);
+}
+
 function onCatChange(){
   S.catId=q('sel-cat').value||null;
   if(!S.catId){
     q('sub-wrap').style.display='none';
     q('custom-sub-wrap').style.display='none';
+    syncGastoContextHint();
     return;
   }
   const cat=CATS.find(c=>c.id===S.catId),sel=q('sel-sub');
@@ -441,6 +634,7 @@ function onCatChange(){
   }
   q('sub-wrap').style.display='';
   q('custom-sub-wrap').style.display='none';
+  syncGastoContextHint();
 }
 
 function onSubChange(){
@@ -523,7 +717,11 @@ function buildLancamentoFromEntrada(entrada,legacyId){
 
 async function insertLancamento(lancamento){
   if(!S.user || !db) return;
-  const { error } = await db.from('lancamentos').insert(lancamento);
+  const { error } = await withTimeout(
+    db.from('lancamentos').insert(lancamento),
+    12000,
+    'lancamentos'
+  );
   if(error) throw error;
 }
 
@@ -596,7 +794,11 @@ async function salvarGasto(){
       necessidade:isEu?S.necessidade:null
     };
     if(S.user){
-      const { error } = await db.from('gastos').insert(gasto);
+      const { error } = await withTimeout(
+        db.from('gastos').insert(gasto),
+        12000,
+        'gastos'
+      );
       if(error) throw error;
       try{await syncLinkedLancamentosForGasto(gasto,legacyId);}
       catch{lancamentoWarning=true;}
@@ -628,6 +830,7 @@ function resetGastos(){
   q('sel-cat').value='';
   q('sub-wrap').style.display='none';
   q('custom-sub-wrap').style.display='none';
+  syncGastoContextHint();
   setDates();
 }
 
@@ -669,21 +872,25 @@ async function salvarParcelamentoAtivo(){
   btn.textContent='Salvando...';
   try{
     const observacoes=cartao?`Cartao/referencia: ${cartao}`:null;
-    const { error } = await db.rpc('criar_parcelamento_ativo_existente',{
-      p_descricao:descricao,
-      p_categoria:categoria,
-      p_subcategoria:subcategoria,
-      p_necessidade:necessidade,
-      p_proprietario_economico:proprietario,
-      p_contexto:contexto,
-      p_total_parcelas:totalParcelas,
-      p_parcelas_ja_pagas:parcelasPagas,
-      p_valor_parcela_base:valorParcela,
-      p_data_compra:dataCompra,
-      p_inicio_competencia:inicioCompetencia,
-      p_dia_vencimento:diaVencimento,
-      p_observacoes:observacoes
-    });
+    const { error } = await withTimeout(
+      db.rpc('criar_parcelamento_ativo_existente',{
+        p_descricao:descricao,
+        p_categoria:categoria,
+        p_subcategoria:subcategoria,
+        p_necessidade:necessidade,
+        p_proprietario_economico:proprietario,
+        p_contexto:contexto,
+        p_total_parcelas:totalParcelas,
+        p_parcelas_ja_pagas:parcelasPagas,
+        p_valor_parcela_base:valorParcela,
+        p_data_compra:dataCompra,
+        p_inicio_competencia:inicioCompetencia,
+        p_dia_vencimento:diaVencimento,
+        p_observacoes:observacoes
+      }),
+      12000,
+      'parcelamentos'
+    );
     if(error) throw error;
     toast('Parcelamento ativo salvo!','ok');
     resetParcelamentoAtivo();
@@ -721,7 +928,11 @@ async function salvarEntrada(){
       data:q('inp-data-entrada').value
     };
     if(S.user){
-      const { error } = await db.from('entradas').insert(entrada);
+      const { error } = await withTimeout(
+        db.from('entradas').insert(entrada),
+        12000,
+        'entradas'
+      );
       if(error) throw error;
       try{await syncLinkedLancamentosForEntrada(entrada,legacyId);}
       catch{lancamentoWarning=true;}
@@ -795,6 +1006,235 @@ function aggregateOriginBreakdown(rows){
     };
   });
   return months;
+}
+
+function toCompetenciaMesFromIso(value){
+  if(!value) return null;
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
+}
+
+function toCompetenciaMesFromDate(value){
+  if(!value) return null;
+  const [year,month]=String(value).split('-');
+  if(!year || !month) return null;
+  return `${year}-${month}-01`;
+}
+
+function buildDashboardRowsFromLegacy(gastos,entradas){
+  const rows=[];
+  (entradas||[]).forEach(item=>{
+    const mes=toCompetenciaMesFromDate(item.data);
+    if(!mes) return;
+    rows.push({
+      mes_competencia:mes,
+      tipo:'entrada',
+      valor:Number(item.valor)||0,
+      categoria:'Entradas',
+      necessidade:null,
+    });
+  });
+  (gastos||[]).forEach(item=>{
+    const mes=toCompetenciaMesFromIso(item.data);
+    if(!mes) return;
+    rows.push({
+      mes_competencia:mes,
+      tipo:'saida',
+      valor:Number(item.valor)||0,
+      categoria:item.categoria || 'Sem categoria',
+      necessidade:item.necessidade || null,
+    });
+  });
+  return rows;
+}
+
+function buildCasaAtualRowsFromLegacy(gastos,entradas){
+  const rows=[];
+  (entradas||[]).forEach(item=>{
+    const mes=toCompetenciaMesFromDate(item.data);
+    if(!mes) return;
+    rows.push({
+      mes_competencia:mes,
+      tipo:'entrada',
+      valor:Number(item.valor)||0,
+    });
+  });
+  (gastos||[]).forEach(item=>{
+    const mes=toCompetenciaMesFromIso(item.data);
+    if(!mes) return;
+    rows.push({
+      mes_competencia:mes,
+      tipo:'saida',
+      valor:Number(item.valor)||0,
+    });
+  });
+  return rows;
+}
+
+function aggregateCasaAtual(rows,config,monthKeys){
+  const months={};
+  (monthKeys||[]).forEach(key=>{
+    months[key]={
+      custo:0,receita_real:0,receita_media:0,receita_usada:0,
+      resultado:0,resultado_validado:null,resultado_referencia:null,
+      validado:false,diferenca_validacao:null
+    };
+  });
+  (rows||[]).forEach(row=>{
+    const key=normalizeMonthStart(row.mes_competencia || row.mes_analisado || row.data_evento || row.data);
+    if(!key) return;
+    if(!months[key]){
+      months[key]={
+        custo:0,receita_real:0,receita_media:0,receita_usada:0,
+        resultado:0,resultado_validado:null,resultado_referencia:null,
+        validado:false,diferenca_validacao:null
+      };
+    }
+    const value=Number(row.valor)||0;
+    if(row.tipo==='saida') months[key].custo+=value;
+    if(row.tipo==='entrada') months[key].receita_real+=value;
+  });
+  const fixedValue=Number(config?.valor_mensal_fixo)||0;
+  const startKey=normalizeMonthStart(config?.inicio_vigencia);
+  Object.keys(months).forEach(key=>{
+    const useReference=config?.ativo && fixedValue > 0 && (!startKey || key >= startKey);
+    const item=months[key];
+    item.receita_media=useReference ? fixedValue : 0;
+    item.validado=item.receita_real > 0;
+    item.receita_usada=item.validado ? item.receita_real : item.receita_media;
+    item.resultado=item.receita_usada - item.custo;
+    item.resultado_validado=item.validado ? item.receita_real - item.custo : null;
+    item.resultado_referencia=item.receita_media > 0 ? item.receita_media - item.custo : null;
+    item.diferenca_validacao=(item.validado && item.receita_media > 0)
+      ? item.receita_real - item.receita_media
+      : null;
+  });
+  return months;
+}
+
+function average(nums){
+  const valid=(nums||[]).filter(n=>Number.isFinite(n));
+  if(!valid.length) return 0;
+  return valid.reduce((sum,n)=>sum+n,0)/valid.length;
+}
+
+function renderCasaAtualPanel(months,config){
+  const metricsEl=q('casa-metrics');
+  const monthsEl=q('casa-months');
+  const statusEl=q('casa-status');
+  const keys=Object.keys(months||{}).sort();
+  const hasActivity=keys.some(key=>{
+    const item=months[key];
+    return (item?.custo || item?.receita_real || item?.receita_fixa);
+  });
+
+  if(!metricsEl || !monthsEl || !statusEl) return;
+
+  if(!keys.length || !hasActivity){
+    metricsEl.innerHTML='<div class="summary-card wide"><div class="summary-note">Ainda nao existem gastos de moradia ou receita de sublocacao suficientes para montar a analise da casa atual.</div></div>';
+    monthsEl.innerHTML='<div class="dash-empty">Cadastre gastos em Moradia e configure a sublocacao fixa para acompanhar o resultado mensal.</div>';
+    statusEl.textContent='Sem dados da casa atual no periodo.';
+    statusEl.className='dashboard-status';
+    return;
+  }
+
+  const currentKey=keys[keys.length-1];
+  const previousKey=keys[keys.length-2];
+  const current=months[currentKey];
+  const previous=previousKey ? months[previousKey] : {custo:0,resultado:0};
+  const recent=keys.slice(-3).map(key=>months[key].resultado);
+  const all=keys.map(key=>months[key].resultado);
+  const avg3=average(recent);
+  const avg6=average(all);
+  const fixedActive=Boolean(config?.ativo && Number(config?.valor_mensal_fixo));
+  const fixedLabel=fixedActive ? moneyBR(Number(config.valor_mensal_fixo)||0) : 'Nao definido';
+  const validatedLabel=current.validado ? moneyBR(current.receita_real) : 'Pendente';
+  const validationDelta=current.diferenca_validacao;
+
+  if(!fixedActive){
+    statusEl.textContent='Defina a media de sublocacao para comparar o aluguel validado de cada mes.';
+    statusEl.className='dashboard-status err';
+  }else if(!current.validado){
+    statusEl.textContent='Este mes ainda nao foi validado por uma entrada em Aluguel; o painel esta usando a media salva como referencia.';
+    statusEl.className='dashboard-status err';
+  }else if(current.resultado < 0 || avg3 < 0){
+    statusEl.textContent='O aluguel validado do mes e/ou o periodo recente ficaram abaixo do custo real da casa.';
+    statusEl.className='dashboard-status err';
+  }else{
+    statusEl.textContent='A entrada validada de Aluguel esta cobrindo o custo real da casa no periodo recente.';
+    statusEl.className='dashboard-status ok';
+  }
+
+  metricsEl.innerHTML=`
+    <div class="summary-card">
+      <div class="summary-kicker">Custo real</div>
+      <div class="summary-value neg">${moneyBR(current.custo)}</div>
+      <div class="summary-note">vs mes anterior: ${percentChange(current.custo, previous.custo)}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Media de sublocacao</div>
+      <div class="summary-value ${fixedActive?'pos':''}">${fixedLabel}</div>
+      <div class="summary-note">${config?.inicio_vigencia ? `Referencia desde ${monthLabel(config.inicio_vigencia)}` : 'Use o botao acima para configurar'}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Aluguel validado</div>
+      <div class="summary-value ${current.validado?'pos':''}">${validatedLabel}</div>
+      <div class="summary-note">${current.validado ? 'Valor puxado das entradas em Aluguel deste mes.' : 'Lance uma entrada em Aluguel para validar o mes.'}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Resultado do mes</div>
+      <div class="summary-value ${current.resultado>=0?'pos':'neg'}">${moneyBR(current.resultado)}</div>
+      <div class="summary-note">${current.validado ? `Validado por Aluguel em ${monthLabel(currentKey)}` : `Provisorio pela media em ${monthLabel(currentKey)}`}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Media movel 3 meses</div>
+      <div class="summary-value ${avg3>=0?'pos':'neg'}">${moneyBR(avg3)}</div>
+      <div class="summary-note">Leitura curta para revisar a media de referencia.</div>
+    </div>
+    <div class="summary-card wide">
+      <div class="summary-kicker">${current.validado && validationDelta!=null ? 'Desvio do aluguel validado' : 'Media do periodo'}</div>
+      <div class="summary-value ${(current.validado && validationDelta!=null ? validationDelta : avg6)>=0?'pos':'neg'}">${moneyBR(current.validado && validationDelta!=null ? validationDelta : avg6)}</div>
+      <div class="summary-note">${current.validado && validationDelta!=null
+        ? `Comparacao entre a entrada real de Aluguel e a media salva para ${monthLabel(currentKey)}.`
+        : (fixedActive ? 'Se esse valor ficar negativo por recorrencia, vale revisar a media de sublocacao.' : 'Sem media definida, o resultado ainda nao e uma projecao automatica.')
+      }</div>
+    </div>
+  `;
+
+  monthsEl.innerHTML=keys.slice(-6).reverse().map(key=>{
+    const item=months[key];
+    return `
+      <div class="month-row">
+        <div>
+          <div class="month-name">${monthLabel(key)}</div>
+          <div class="dash-card-sub">${moneyBR(item.custo)} custo • ${moneyBR(item.receita_usada)} receita usada</div>
+          <div class="dash-card-subline">${item.validado ? `${moneyBR(item.receita_real)} aluguel validado` : `${moneyBR(item.receita_media)} media de referencia`}</div>
+        </div>
+        <div class="month-balance ${item.resultado>=0?'pos':'neg'}">${moneyBR(item.resultado)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function buildLegacyLikeRecordFromLancamento(row){
+  return {
+    id:row.id,
+    user_id:row.user_id,
+    valor:Number(row.valor)||0,
+    categoria:row.categoria,
+    subcategoria:row.subcategoria,
+    necessidade:row.necessidade,
+    data:row.data_evento,
+    dono:row.proprietario_economico==='mae'?'mae':'eu',
+    tipo_pagamento:'a_vista',
+    forma_pagamento:row.forma_pagamento,
+    banco:row.banco_referencia,
+    origem:row.subcategoria,
+    origem_de:null,
+    origem_motivo:null,
+    origem_especificacao:null,
+  };
 }
 
 function renderBarList(containerId,items,tone=''){
@@ -932,33 +1372,130 @@ async function refreshDashboard(){
   }
   statusEl.textContent='Atualizando resumo...';
   statusEl.className='dashboard-status';
+  const now=new Date();
+  const from=new Date(now.getFullYear(),now.getMonth()-5,1);
+  const fromKey=`${from.getFullYear()}-${String(from.getMonth()+1).padStart(2,'0')}-01`;
+  const monthKeys=buildMonthKeys(from,6);
   try{
-    const now=new Date();
-    const from=new Date(now.getFullYear(),now.getMonth()-5,1);
-    const fromKey=`${from.getFullYear()}-${String(from.getMonth()+1).padStart(2,'0')}-01`;
-    const [baseRes,originRes] = await Promise.all([
-      db
-        .from('lancamentos')
-        .select('mes_competencia,tipo,valor,categoria,necessidade')
-        .eq('user_id',S.user.id)
-        .gte('mes_competencia',fromKey)
-        .order('mes_competencia',{ascending:true}),
-      db
-        .from('v_gastos_origem_competencia')
-        .select('mes_analisado,gasto_novo_no_mes,custo_herdado_mes,gasto_jogado_para_futuro_no_mes,parcelamentos_ativos_mes')
-        .eq('user_id',S.user.id)
-        .gte('mes_analisado',fromKey)
-        .order('mes_analisado',{ascending:true})
+    const casaConfig=S.casaAtualConfig || await loadCasaAtualConfig();
+    const [baseRes,originRes,casaRes] = await Promise.all([
+      withTimeout(
+        db
+          .from('lancamentos')
+          .select('mes_competencia,tipo,valor,categoria,necessidade')
+          .eq('user_id',S.user.id)
+          .gte('mes_competencia',fromKey)
+          .order('mes_competencia',{ascending:true}),
+        12000,
+        'resumo em lancamentos'
+      ),
+      withTimeout(
+        db
+          .from('v_gastos_origem_competencia')
+          .select('mes_analisado,gasto_novo_no_mes,custo_herdado_mes,gasto_jogado_para_futuro_no_mes,parcelamentos_ativos_mes')
+          .eq('user_id',S.user.id)
+          .gte('mes_analisado',fromKey)
+          .order('mes_analisado',{ascending:true}),
+        12000,
+        'resumo temporal'
+      ),
+      withTimeout(
+        db
+          .from('lancamentos')
+          .select('mes_competencia,tipo,valor')
+          .eq('user_id',S.user.id)
+          .eq('contexto','casa_atual')
+          .gte('mes_competencia',fromKey)
+          .order('mes_competencia',{ascending:true}),
+        12000,
+        'resultado da casa atual'
+      )
     ]);
-    if(baseRes.error) throw baseRes.error;
-    if(originRes.error) throw originRes.error;
+    let dashboardRows=[];
+    let originRows=[];
+    let casaRows=[];
+
+    if(!baseRes.error && (baseRes.data||[]).length){
+      dashboardRows=baseRes.data||[];
+    }else{
+      const [gastosRes,entradasRes] = await Promise.all([
+        withTimeout(
+          db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+          12000,
+          'gastos legados'
+        ),
+        withTimeout(
+          db.from('entradas').select('valor,data').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+          12000,
+          'entradas legadas'
+        )
+      ]);
+      if(gastosRes.error) throw gastosRes.error;
+      if(entradasRes.error) throw entradasRes.error;
+      dashboardRows=buildDashboardRowsFromLegacy(gastosRes.data||[],entradasRes.data||[]);
+    }
+
+    if(!originRes.error){
+      originRows=originRes.data||[];
+    }
+
+    if(!casaRes.error && (casaRes.data||[]).length){
+      casaRows=casaRes.data||[];
+    }else{
+      const [moradiaRes,aluguelRes]=await Promise.all([
+        withTimeout(
+          db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
+          12000,
+          'gastos de moradia'
+        ),
+        withTimeout(
+          db.from('entradas').select('valor,data').eq('user_id',S.user.id).eq('origem','aluguel').gte('data',fromKey).order('data',{ascending:true}),
+          12000,
+          'entradas de aluguel'
+        ),
+      ]);
+      if(moradiaRes.error) throw moradiaRes.error;
+      if(aluguelRes.error) throw aluguelRes.error;
+      casaRows=buildCasaAtualRowsFromLegacy(moradiaRes.data||[],aluguelRes.data||[]);
+    }
+
     renderDashboard(
-      aggregateDashboard(baseRes.data || []),
-      aggregateOriginBreakdown(originRes.data || [])
+      aggregateDashboard(dashboardRows),
+      aggregateOriginBreakdown(originRows)
     );
-  }catch(_ex){
+    renderCasaAtualPanel(
+      aggregateCasaAtual(casaRows,casaConfig,monthKeys),
+      casaConfig
+    );
+    writeCache(DASHBOARD_CACHE_KEY,{
+      dashboardRows,
+      originRows,
+      casaRows,
+      casaConfig,
+      fromKey,
+      savedAt:new Date().toISOString()
+    });
+  }catch(ex){
+    const cached=readCache(DASHBOARD_CACHE_KEY,null);
+    if(cached?.dashboardRows?.length){
+      renderDashboard(
+        aggregateDashboard(cached.dashboardRows),
+        aggregateOriginBreakdown(cached.originRows||[])
+      );
+      renderCasaAtualPanel(
+        aggregateCasaAtual(cached.casaRows||[],normalizeCasaAtualConfig(cached.casaConfig||{}),monthKeys),
+        normalizeCasaAtualConfig(cached.casaConfig||{})
+      );
+      statusEl.textContent='Mostrando o ultimo resumo salvo neste dispositivo.';
+      statusEl.className='dashboard-status err';
+      return;
+    }
     statusEl.textContent='Nao foi possivel carregar o dashboard.';
     statusEl.className='dashboard-status err';
+    renderCasaAtualPanel(
+      aggregateCasaAtual([],S.casaAtualConfig || getCasaAtualConfig(),monthKeys),
+      S.casaAtualConfig || getCasaAtualConfig()
+    );
   }
 }
 
@@ -981,13 +1518,57 @@ async function openList(tab){
     let items=[];
     let error=null;
     if(tab==='gastos'){
-      const res=await db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
+      const res=await withTimeout(
+        db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150),
+        12000,
+        'lista de gastos'
+      );
       items=res.data||[];
       error=res.error;
+      if((error || !items.length) && db){
+        const fallback=await withTimeout(
+          db
+            .from('lancamentos')
+            .select('id,user_id,valor,categoria,subcategoria,necessidade,data_evento,proprietario_economico,forma_pagamento,banco_referencia')
+            .eq('user_id',S.user.id)
+            .eq('tipo','saida')
+            .order('data_evento',{ascending:false})
+            .limit(150),
+          12000,
+          'lista de gastos em lancamentos'
+        );
+        if(!fallback.error && (fallback.data||[]).length){
+          items=(fallback.data||[]).map(buildLegacyLikeRecordFromLancamento);
+          error=null;
+        }
+      }
+      if(items.length) writeCache(GASTOS_CACHE_KEY,items);
     }else{
-      const res=await db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
+      const res=await withTimeout(
+        db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150),
+        12000,
+        'lista de entradas'
+      );
       items=res.data||[];
       error=res.error;
+      if((error || !items.length) && db){
+        const fallback=await withTimeout(
+          db
+            .from('lancamentos')
+            .select('id,user_id,valor,subcategoria,data_evento')
+            .eq('user_id',S.user.id)
+            .eq('tipo','entrada')
+            .order('data_evento',{ascending:false})
+            .limit(150),
+          12000,
+          'lista de entradas em lancamentos'
+        );
+        if(!fallback.error && (fallback.data||[]).length){
+          items=(fallback.data||[]).map(buildLegacyLikeRecordFromLancamento);
+          error=null;
+        }
+      }
+      if(items.length) writeCache(ENTRADAS_CACHE_KEY,items);
     }
     if(error) throw error;
     if(!items.length){
@@ -1028,6 +1609,44 @@ async function openList(tab){
       });
     });
   }catch(ex){
+    const cached=readCache(tab==='gastos'?GASTOS_CACHE_KEY:ENTRADAS_CACHE_KEY,[]);
+    if(cached.length){
+      const groups={};
+      cached.forEach(item=>{
+        const rawDate=(item.data || item.created_at || '').slice(0,10);
+        const d=rawDate || 'sem-data';
+        if(!groups[d])groups[d]=[];
+        groups[d].push(item);
+      });
+      listEl.innerHTML='';
+      Object.entries(groups).forEach(([date,records])=>{
+        const dh=document.createElement('div');
+        dh.className='day-header';
+        dh.textContent=date==='sem-data'?'Sem data':formatDay(date);
+        listEl.appendChild(dh);
+        records.forEach(rec=>{
+          const el=document.createElement('div');
+          el.className='list-item';
+          const isG=tab==='gastos';
+          const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
+          const icon=isG?(CAT_ICONS[catId]||'ðŸ’¸'):'ðŸ’°';
+          const title=isG?(rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mae':'Gasto')):origemLabel(rec.origem);
+          const sub=isG?(rec.dono==='mae'?'Minha Mae':rec.categoria||''):(rec.origem_de||rec.origem_especificacao||'');
+          const val='R$ '+Number(rec.valor).toLocaleString('pt-BR',{minimumFractionDigits:2});
+          el.innerHTML=`
+            <div class="list-item-icon ${isG?'terra':'sage'}">${icon}</div>
+            <div class="list-item-info">
+              <div class="list-item-title">${title}</div>
+              ${sub?`<div class="list-item-sub">${sub}</div>`:''}
+            </div>
+            <div class="list-item-val ${isG?'neg':'pos'}">${val}</div>`;
+          el.addEventListener('click',()=>openDetail(rec,tab));
+          listEl.appendChild(el);
+        });
+      });
+      toast('Mostrando os ultimos registros salvos neste dispositivo.','err');
+      return;
+    }
     listEl.innerHTML=`<div class="empty-state"><div class="empty-state-icon">!</div><p>Erro ao carregar registros.</p><p style="font-size:12px">${ex?.message||''}</p></div>`;
   }
 }

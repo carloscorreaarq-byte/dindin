@@ -138,14 +138,27 @@ html,body{
   font-size:15px;font-weight:600;cursor:pointer;
   display:flex;align-items:center;justify-content:center;gap:6px;
   transition:all .15s;width:100%;
+  line-height:1.1;
+  padding:0 18px;
+  -webkit-appearance:none;appearance:none;
+  flex-shrink:0;
 }
 .btn:active{transform:scale(.97)}
 .btn:disabled{opacity:.5;pointer-events:none}
 
+.btn-save{
+  min-height:58px;
+  height:58px;
+  border-radius:22px;
+  font-size:17px;
+  font-weight:700;
+  letter-spacing:-.01em;
+}
+
 /* Botão principal — Café */
 .btn-cafe{
   background:var(--cafe);color:#fff;border-radius:var(--r-btn);
-  height:52px;font-size:16px;
+  min-height:56px;height:56px;font-size:16px;
   box-shadow:var(--shadow-cafe);
 }
 .btn-cafe:active{background:var(--cafe-lt);transform:scale(.97) translateY(1px);box-shadow:0 4px 14px rgba(74,60,49,.22)}
@@ -153,7 +166,7 @@ html,body{
 /* Botão Terracota */
 .btn-terra{
   background:var(--terracota);color:#fff;border-radius:var(--r-btn);
-  height:52px;font-size:16px;
+  min-height:56px;height:56px;font-size:16px;
   box-shadow:var(--shadow-terra);
 }
 .btn-terra:active{background:var(--terracota-dk);transform:scale(.97)}
@@ -161,7 +174,7 @@ html,body{
 /* Botão Sage */
 .btn-sage{
   background:var(--sage);color:#fff;border-radius:var(--r-btn);
-  height:52px;font-size:16px;
+  min-height:56px;height:56px;font-size:16px;
   box-shadow:var(--shadow-sage);
 }
 .btn-sage:active{background:var(--sage-dk);transform:scale(.97)}
@@ -239,6 +252,7 @@ html,body{
   font-size:16px;font-weight:800;letter-spacing:-.2px;color:var(--text);
 }
 .dash-card-sub{font-size:12px;color:var(--text2)}
+.dash-card-subline{font-size:11px;color:var(--text3);margin-top:3px}
 .bar-list{display:flex;flex-direction:column;gap:10px}
 .bar-row{display:flex;flex-direction:column;gap:6px}
 .bar-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -567,6 +581,11 @@ html,body{
 .hint-strong{display:block;font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px}
 .mini-note{font-size:12px;color:var(--text2);line-height:1.45}
 .mini-note strong{color:var(--text)}
+.inline-note{
+  display:none;background:var(--field-bg);border-radius:14px;padding:11px 12px;
+  font-size:12px;line-height:1.45;color:var(--text2);
+}
+.inline-note.show{display:block}
 
 /* ══════════════════════════════════════════════════
    EMPTY / LOADING
@@ -723,6 +742,19 @@ html,body{
         </div>
         <div class="bar-list" id="dashboard-needs"></div>
       </div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div>
+            <div class="dash-card-title">Casa atual</div>
+            <div class="dash-card-sub">Custo real da moradia versus media de sublocacao validada por Aluguel</div>
+          </div>
+          <button type="button" id="btn-casa-config" class="dashboard-chip">Media</button>
+        </div>
+        <div class="dashboard-status" id="casa-status"></div>
+        <div class="summary-grid" id="casa-metrics"></div>
+        <div class="month-list" id="casa-months"></div>
+      </div>
     </div>
   </div>
 
@@ -799,6 +831,10 @@ html,body{
           <input type="text" class="inp" id="inp-custom-sub" placeholder="Ex: Sorvete, Rappi...">
         </div>
 
+        <div class="inline-note" id="gasto-contexto-note">
+          Gastos na categoria <strong>Moradia</strong> entram automaticamente na analise da <strong>Casa atual</strong>.
+        </div>
+
         <div>
           <label class="lbl">Era necessário?</label>
           <div class="nec-grid">
@@ -820,7 +856,7 @@ html,body{
 
       <div class="flex-spacer" style="flex:1"></div>
 
-      <button type="button" id="btn-salvar-gasto" class="btn btn-terra">Salvar Gasto</button>
+      <button type="button" id="btn-salvar-gasto" class="btn btn-terra btn-save">Salvar Gasto</button>
 
     </div>
   </div>
@@ -882,7 +918,7 @@ html,body{
 
       <div class="flex-spacer" style="flex:1"></div>
 
-      <button type="button" id="btn-salvar-entrada" class="btn btn-sage">Salvar Entrada</button>
+      <button type="button" id="btn-salvar-entrada" class="btn btn-sage btn-save">Salvar Entrada</button>
 
     </div>
   </div>
@@ -998,7 +1034,7 @@ html,body{
         </div>
       </div>
 
-      <button type="button" id="btn-salvar-parcelamento-ativo" class="btn btn-cafe">Salvar Parcelamento Ativo</button>
+      <button type="button" id="btn-salvar-parcelamento-ativo" class="btn btn-cafe btn-save">Salvar Parcelamento Ativo</button>
     </div>
   </div>
 
@@ -1106,7 +1142,30 @@ html,body{
     </div>
     <div class="edit-actions">
       <button type="button" class="btn btn-ghost" id="edit-cancel">Cancelar</button>
-      <button type="button" class="btn btn-terra" id="edit-save">Salvar alteracoes</button>
+      <button type="button" class="btn btn-terra btn-save" id="edit-save">Salvar alteracoes</button>
+    </div>
+  </div>
+</div>
+
+<div class="edit-overlay" id="casa-overlay">
+  <div class="edit-card">
+    <div class="edit-title">Casa atual</div>
+    <div class="mini-note">Configure a media de sublocacao. Cada mes ela sera validada pelas entradas cadastradas em <strong>Aluguel</strong>.</div>
+    <div>
+      <label class="lbl">Descricao</label>
+      <input type="text" class="inp" id="casa-descricao" placeholder="Ex: Media da sublocacao atual">
+    </div>
+    <div>
+      <label class="lbl">Valor medio mensal</label>
+      <input type="number" step="0.01" min="0" class="inp" id="casa-valor-fixo" placeholder="Ex: 2500.00">
+    </div>
+    <div>
+      <label class="lbl">Inicio da vigencia</label>
+      <input type="month" class="inp" id="casa-inicio-vigencia">
+    </div>
+    <div class="edit-actions">
+      <button type="button" class="btn btn-ghost" id="casa-cancelar">Cancelar</button>
+      <button type="button" class="btn btn-sage btn-save" id="casa-salvar">Salvar media</button>
     </div>
   </div>
 </div>
