@@ -555,6 +555,13 @@ html,body{
 }
 .coming-soon h2{font-size:20px;font-weight:700;color:var(--text);letter-spacing:-.3px}
 .coming-soon p{font-size:14px;text-align:center;line-height:1.5;color:var(--text2)}
+.hint-card{
+  background:var(--field-bg);border-radius:14px;padding:12px 14px;
+  font-size:12px;line-height:1.5;color:var(--text2);
+}
+.hint-strong{display:block;font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px}
+.mini-note{font-size:12px;color:var(--text2);line-height:1.45}
+.mini-note strong{color:var(--text)}
 
 /* ══════════════════════════════════════════════════
    EMPTY / LOADING
@@ -867,10 +874,112 @@ html,body{
 
   <!-- ── PARCELAS ── -->
   <div id="tab-parcelas" class="tab-pane">
-    <div class="coming-soon">
-      <div class="coming-soon-icon">🏢</div>
-      <h2>Em breve</h2>
-      <p>Gestão do Apartamento Alya SP e Rio em desenvolvimento</p>
+    <div class="form-body">
+      <div class="fields-card">
+        <div class="dashboard-title" style="font-size:22px">Parcelas ativas</div>
+        <div class="dashboard-sub">Cadastre compras antigas ainda em aberto para entrar na analise mensal.</div>
+      </div>
+
+      <div class="hint-card">
+        <span class="hint-strong">Como este cadastro entra na analise</span>
+        O app vai considerar as parcelas que vieram de meses anteriores, o que nasceu neste mes e o que voce empurrou para os meses seguintes.
+      </div>
+
+      <div class="fields-card">
+        <div>
+          <label class="lbl">Descricao da compra</label>
+          <input type="text" class="inp" id="parc-descricao" placeholder="Ex: iPhone, passagem, sofa">
+        </div>
+
+        <div class="row">
+          <div class="half">
+            <label class="lbl">De quem e a compra?</label>
+            <select class="sel" id="parc-owner">
+              <option value="eu">Minha</option>
+              <option value="mae">Minha Mae</option>
+            </select>
+          </div>
+          <div class="half">
+            <label class="lbl">Contexto</label>
+            <select class="sel" id="parc-contexto">
+              <option value="pessoal">Pessoal</option>
+              <option value="casa_atual">Casa atual</option>
+              <option value="mae">Mae</option>
+              <option value="alya">Alya</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="half">
+            <label class="lbl">Categoria</label>
+            <select class="sel" id="parc-categoria">
+              <option value="">Selecionar...</option>
+            </select>
+          </div>
+          <div class="half">
+            <label class="lbl">Necessidade</label>
+            <select class="sel" id="parc-necessidade">
+              <option value="">Nao informar</option>
+              <option value="1">Vital</option>
+              <option value="2">Basico</option>
+              <option value="3">Superfluo</option>
+              <option value="4">Bobagem</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="lbl">Subcategoria</label>
+          <input type="text" class="inp" id="parc-subcategoria" placeholder="Ex: celular, viagem, mercado">
+        </div>
+
+        <div>
+          <label class="lbl">Cartao ou referencia</label>
+          <input type="text" class="inp" id="parc-cartao" placeholder="Ex: Nubank, XP, Santander">
+        </div>
+      </div>
+
+      <div class="fields-card">
+        <div class="row">
+          <div class="half">
+            <label class="lbl">Total de parcelas</label>
+            <input type="number" min="2" max="240" class="inp" id="parc-total" placeholder="Ex: 10">
+          </div>
+          <div class="half">
+            <label class="lbl">Parcelas ja pagas</label>
+            <input type="number" min="0" max="239" class="inp" id="parc-pagas" placeholder="Ex: 4">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="half">
+            <label class="lbl">Valor de cada parcela</label>
+            <input type="number" step="0.01" min="0.01" class="inp" id="parc-valor" placeholder="Ex: 249.90">
+          </div>
+          <div class="half">
+            <label class="lbl">Dia do vencimento</label>
+            <input type="number" min="1" max="31" class="inp" id="parc-vencimento" placeholder="Ex: 15">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="half">
+            <label class="lbl">Mes da compra</label>
+            <input type="month" class="inp" id="parc-data-compra">
+          </div>
+          <div class="half">
+            <label class="lbl">Mes da 1a parcela</label>
+            <input type="month" class="inp" id="parc-inicio">
+          </div>
+        </div>
+
+        <div class="mini-note" id="parc-resumo">
+          Informe os dados do parcelamento para calcular o total ainda em aberto.
+        </div>
+      </div>
+
+      <button type="button" id="btn-salvar-parcelamento-ativo" class="btn btn-cafe">Salvar Parcelamento Ativo</button>
     </div>
   </div>
 

@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindValor('val-entrada-inp','val-entrada-num',v=>S.entradaCents=v);
   setupGastos();
   setupEntradas();
+  setupParcelamentos();
   setupConfig();
   setupDashboard();
   setupNav();

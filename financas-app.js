@@ -132,6 +132,93 @@ function setupDashboard(){
   q('btn-dashboard-refresh').addEventListener('click',()=>refreshDashboard());
 }
 
+async function ensureActiveSession(){
+  if(!db) return false;
+  if(S.user) return true;
+  try{
+    const { data, error } = await db.auth.getSession();
+    if(error) throw error;
+    if(data?.session?.user){
+      S.user=data.session.user;
+      return true;
+    }
+  }catch{}
+  S.user=null;
+  showAuth();
+  return false;
+}
+
+function monthInputToDate(value){
+  return value?`${value}-01`:null;
+}
+
+function buildParcelamentoCategoriaOptions(){
+  const sel=q('parc-categoria');
+  if(!sel) return;
+  sel.innerHTML='<option value="">Selecionar...</option>';
+  CATS.forEach(cat=>{
+    const o=document.createElement('option');
+    o.value=cat.nome;
+    o.textContent=cat.nome;
+    sel.appendChild(o);
+  });
+}
+
+function syncParcelamentoOwnerContext(){
+  const owner=q('parc-owner');
+  const contexto=q('parc-contexto');
+  const necessidade=q('parc-necessidade');
+  if(!owner || !contexto) return;
+  if(owner.value==='mae'){
+    contexto.value='mae';
+    necessidade.value='';
+  }
+}
+
+function syncParcelamentoResumo(){
+  const total=Number(q('parc-total')?.value||0);
+  const pagas=Number(q('parc-pagas')?.value||0);
+  const valor=Number(q('parc-valor')?.value||0);
+  const abertas=Math.max(total-pagas,0);
+  const totalAberto=abertas*valor;
+  const el=q('parc-resumo');
+  if(!el) return;
+  if(!total || !valor){
+    el.innerHTML='Informe os dados do parcelamento para calcular o total ainda em aberto.';
+    return;
+  }
+  el.innerHTML=`<strong>Resumo:</strong> restam ${abertas} parcela(s) em aberto, com total estimado de ${moneyBR(totalAberto)}.`;
+}
+
+function resetParcelamentoAtivo(){
+  q('parc-descricao').value='';
+  q('parc-owner').value='eu';
+  q('parc-contexto').value='pessoal';
+  q('parc-categoria').value='';
+  q('parc-necessidade').value='';
+  q('parc-subcategoria').value='';
+  q('parc-cartao').value='';
+  q('parc-total').value='';
+  q('parc-pagas').value='';
+  q('parc-valor').value='';
+  q('parc-vencimento').value='';
+  q('parc-data-compra').value='';
+  q('parc-inicio').value='';
+  syncParcelamentoResumo();
+}
+
+function setupParcelamentos(){
+  if(!q('btn-salvar-parcelamento-ativo')) return;
+  buildParcelamentoCategoriaOptions();
+  q('parc-owner').addEventListener('change',syncParcelamentoOwnerContext);
+  ['parc-total','parc-pagas','parc-valor'].forEach(id=>{
+    q(id).addEventListener('input',syncParcelamentoResumo);
+  });
+  q('btn-salvar-parcelamento-ativo').addEventListener('click',salvarParcelamentoAtivo);
+  syncParcelamentoOwnerContext();
+  syncParcelamentoResumo();
+}
+
 q('form-auth').addEventListener('submit',async e=>{
   e.preventDefault();
   const email=q('inp-email').value.trim(), pwd=q('inp-senha').value;
@@ -232,18 +319,42 @@ function moneyBR(value){
 }
 
 function localDateTimeToIso(value){
-  return new Date(value).toISOString();
+  if(!value) throw new Error('Data e hora nao informadas.');
+  const [datePart,timePart='00:00']=value.split('T');
+  const [year,month,day]=datePart.split('-').map(Number);
+  const [hour,minute]=timePart.split(':').map(Number);
+  const localDate=new Date(year,(month||1)-1,day||1,hour||0,minute||0,0,0);
+  if(Number.isNaN(localDate.getTime())) throw new Error('Data e hora invalidas neste dispositivo.');
+  return localDate.toISOString();
 }
 
 function dateInputToMiddayIso(value){
-  return `${value}T12:00:00-03:00`;
+  if(!value) throw new Error('Data nao informada.');
+  const [year,month,day]=value.split('-').map(Number);
+  const localDate=new Date(year,(month||1)-1,day||1,12,0,0,0);
+  if(Number.isNaN(localDate.getTime())) throw new Error('Data invalida neste dispositivo.');
+  return localDate.toISOString();
 }
 
 function isoToDatetimeLocal(value){
   if(!value) return '';
   const d=new Date(value);
-  const local=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString();
-  return local.slice(0,16);
+  if(Number.isNaN(d.getTime())) return '';
+  const year=d.getFullYear();
+  const month=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  const hour=String(d.getHours()).padStart(2,'0');
+  const minute=String(d.getMinutes()).padStart(2,'0');
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function newUuid(){
+  if(globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0;
+    const v=c==='x'?r:(r&0x3|0x8);
+    return v.toString(16);
+  });
 }
 
 function buildParcelas(){
@@ -460,6 +571,7 @@ async function deleteLinkedLancamentos(legacyId){
 }
 
 async function salvarGasto(){
+  if(!db || !(await ensureActiveSession())){toast('Entre novamente para salvar o gasto.','err');return;}
   if(!S.gastoCents){toast('Digite o valor','err');return;}
   const isEu=S.owner==='eu',sub=isEu?getSubFinal():null,isCustom=isEu&&q('sel-sub').value==='__outros__';
   if(isEu&&!S.catId){toast('Selecione uma categoria','err');return;}
@@ -469,7 +581,7 @@ async function salvarGasto(){
   try{
     let lancamentoWarning=false;
     if(isCustom&&sub)await persistCustomSub(S.catId,sub);
-    const legacyId=crypto.randomUUID();
+    const legacyId=newUuid();
     const gasto={
       id:legacyId,
       user_id:S.user?.id,
@@ -528,7 +640,68 @@ function setupEntradas(){
   q('btn-salvar-entrada').addEventListener('click',salvarEntrada);
 }
 
+async function salvarParcelamentoAtivo(){
+  if(!db || !(await ensureActiveSession())){toast('Entre novamente para salvar parcelamentos.','err');return;}
+  const descricao=q('parc-descricao').value.trim();
+  const proprietario=q('parc-owner').value;
+  const contexto=q('parc-contexto').value;
+  const categoria=q('parc-categoria').value || null;
+  const necessidade=q('parc-necessidade').value ? Number(q('parc-necessidade').value) : null;
+  const subcategoria=q('parc-subcategoria').value.trim() || null;
+  const cartao=q('parc-cartao').value.trim();
+  const totalParcelas=Number(q('parc-total').value||0);
+  const parcelasPagas=Number(q('parc-pagas').value||0);
+  const valorParcela=Number(q('parc-valor').value||0);
+  const diaVencimento=q('parc-vencimento').value ? Number(q('parc-vencimento').value) : null;
+  const dataCompra=monthInputToDate(q('parc-data-compra').value);
+  const inicioCompetencia=monthInputToDate(q('parc-inicio').value);
+
+  if(!descricao){toast('Descreva a compra parcelada.','err');return;}
+  if(!totalParcelas || totalParcelas < 2){toast('Informe um total de parcelas valido.','err');return;}
+  if(parcelasPagas < 0 || parcelasPagas >= totalParcelas){toast('Parcelas ja pagas devem ser menores que o total.','err');return;}
+  if(!valorParcela || valorParcela <= 0){toast('Informe o valor da parcela.','err');return;}
+  if(!dataCompra){toast('Informe o mes da compra.','err');return;}
+  if(!inicioCompetencia){toast('Informe o mes da primeira parcela.','err');return;}
+  if(contexto==='mae' && proprietario!=='mae'){toast('Para contexto Mae, selecione a compra como da sua mae.','err');return;}
+
+  const btn=q('btn-salvar-parcelamento-ativo');
+  btn.disabled=true;
+  btn.textContent='Salvando...';
+  try{
+    const observacoes=cartao?`Cartao/referencia: ${cartao}`:null;
+    const { error } = await db.rpc('criar_parcelamento_ativo_existente',{
+      p_descricao:descricao,
+      p_categoria:categoria,
+      p_subcategoria:subcategoria,
+      p_necessidade:necessidade,
+      p_proprietario_economico:proprietario,
+      p_contexto:contexto,
+      p_total_parcelas:totalParcelas,
+      p_parcelas_ja_pagas:parcelasPagas,
+      p_valor_parcela_base:valorParcela,
+      p_data_compra:dataCompra,
+      p_inicio_competencia:inicioCompetencia,
+      p_dia_vencimento:diaVencimento,
+      p_observacoes:observacoes
+    });
+    if(error) throw error;
+    toast('Parcelamento ativo salvo!','ok');
+    resetParcelamentoAtivo();
+  }catch(ex){
+    const msg=ex?.message||'';
+    if(msg.includes('criar_parcelamento_ativo_existente')){
+      toast('Rode antes o SQL complementar de parcelamentos ativos no Supabase.','err');
+    }else{
+      toast(`Nao foi possivel salvar o parcelamento.${msg?` ${msg}`:''}`,'err');
+    }
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Salvar Parcelamento Ativo';
+  }
+}
+
 async function salvarEntrada(){
+  if(!db || !(await ensureActiveSession())){toast('Entre novamente para salvar a entrada.','err');return;}
   if(!S.entradaCents){toast('Digite o valor','err');return;}
   const origem=q('sel-origem').value;
   const btn=q('btn-salvar-entrada');
@@ -536,7 +709,7 @@ async function salvarEntrada(){
   btn.textContent='Salvando...';
   try{
     let lancamentoWarning=false;
-    const legacyId=crypto.randomUUID();
+    const legacyId=newUuid();
     const entrada={
       id:legacyId,
       user_id:S.user?.id,
@@ -714,7 +887,7 @@ function renderDashboard(data){
 async function refreshDashboard(){
   const statusEl=q('dashboard-status');
   if(!statusEl) return;
-  if(!db || !S.user){
+  if(!db || !(await ensureActiveSession())){
     statusEl.textContent='Entre no app para carregar o resumo.';
     statusEl.className='dashboard-status err';
     return;
@@ -745,7 +918,10 @@ function refreshDashboardIfVisible(){
 }
 
 async function openList(tab){
-  if(!S.user)return;
+  if(!db || !(await ensureActiveSession())){
+    toast('Entre novamente para abrir seus registros.','err');
+    return;
+  }
   const listEl=q('sheet-list'),titleEl=q('sheet-title');
   listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Carregando...</p></div>';
   titleEl.textContent=tab==='gastos'?'Meus Gastos':'Minhas Entradas';
@@ -862,6 +1038,7 @@ function closeEditGasto(){
 async function saveEditedGasto(){
   const rec=S.detailRecord;
   if(!rec || S.detailTab!=='gastos') return;
+  if(!db || !(await ensureActiveSession())){toast('Entre novamente para editar o gasto.','err');return;}
   const btn=q('edit-save');
   btn.disabled=true;
   btn.textContent='Salvando...';
@@ -894,6 +1071,7 @@ async function deleteCurrentRecord(){
   const rec=S.detailRecord;
   const tab=S.detailTab;
   if(!rec || !tab) return;
+  if(!db || !(await ensureActiveSession())){toast('Entre novamente para excluir o registro.','err');return;}
   const label=tab==='gastos'?'gasto':'entrada';
   if(!confirm(`Deseja excluir este ${label}?`)) return;
   try{
@@ -958,6 +1136,7 @@ function formatDay(iso){
 function formatDateTime(iso){
   if(!iso)return'';
   const d=new Date(iso);
+  if(Number.isNaN(d.getTime())) return String(iso);
   return d.toLocaleDateString('pt-BR')+(iso.includes('T')?' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'');
 }
 
