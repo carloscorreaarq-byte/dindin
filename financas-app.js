@@ -183,6 +183,9 @@ async function withTimeout(promise,ms,label='operacao'){
   }
 }
 
+const DASHBOARD_REMOTE_TIMEOUT_MS = 4500;
+const LIST_REMOTE_TIMEOUT_MS = 3500;
+
 function currentMonthStart(){
   const now=new Date();
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
@@ -936,13 +939,13 @@ function setupNav(){
     let t;
     btn.addEventListener('pointerdown',()=>{
       if(!tabSupportsList(btn.dataset.tab)) return;
-      t=setTimeout(()=>openList(btn.dataset.tab),500);
+      t=setTimeout(()=>openListFast(btn.dataset.tab),500);
     });
     btn.addEventListener('pointerup',()=>clearTimeout(t));
     btn.addEventListener('pointerleave',()=>clearTimeout(t));
     btn.addEventListener('click',()=>{
       if(btn.classList.contains('active')){
-        if(tabSupportsList(btn.dataset.tab)) openList(btn.dataset.tab);
+        if(tabSupportsList(btn.dataset.tab)) openListFast(btn.dataset.tab);
         else if(btn.dataset.tab==='dashboard') refreshDashboard();
         else if(btn.dataset.tab==='investimentos') refreshAlyaDashboard();
         return;
@@ -1724,6 +1727,46 @@ function buildLegacyLikeRecordFromLancamento(row){
   };
 }
 
+function renderListRecords(listEl,items,tab){
+  if(!items.length){
+    listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔍</div><p>Nenhum registro ainda</p></div>';
+    return;
+  }
+  const groups={};
+  items.forEach(item=>{
+    const rawDate=(item.data || item.created_at || '').slice(0,10);
+    const d=rawDate || 'sem-data';
+    if(!groups[d])groups[d]=[];
+    groups[d].push(item);
+  });
+  listEl.innerHTML='';
+  Object.entries(groups).forEach(([date,records])=>{
+    const dh=document.createElement('div');
+    dh.className='day-header';
+    dh.textContent=date==='sem-data'?'Sem data':formatDay(date);
+    listEl.appendChild(dh);
+    records.forEach(rec=>{
+      const el=document.createElement('div');
+      el.className='list-item';
+      const isG=tab==='gastos';
+      const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
+      const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
+      const title=isG?(rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mae':'Gasto')):origemLabel(rec.origem);
+      const sub=isG?(rec.dono==='mae'?'Minha Mae':rec.categoria||''):(rec.origem_de||rec.origem_especificacao||'');
+      const val='R$ '+Number(rec.valor).toLocaleString('pt-BR',{minimumFractionDigits:2});
+      el.innerHTML=`
+        <div class="list-item-icon ${isG?'terra':'sage'}">${icon}</div>
+        <div class="list-item-info">
+          <div class="list-item-title">${title}</div>
+          ${sub?`<div class="list-item-sub">${sub}</div>`:''}
+        </div>
+        <div class="list-item-val ${isG?'neg':'pos'}">${val}</div>`;
+      el.addEventListener('click',()=>openDetail(rec,tab));
+      listEl.appendChild(el);
+    });
+  });
+}
+
 function renderBarList(containerId,items,tone=''){
   const el=q(containerId);
   if(!items.length){
@@ -1863,9 +1906,22 @@ async function refreshDashboard(){
   const from=new Date(now.getFullYear(),now.getMonth()-5,1);
   const fromKey=`${from.getFullYear()}-${String(from.getMonth()+1).padStart(2,'0')}-01`;
   const monthKeys=buildMonthKeys(from,6);
+  const cached=readCache(DASHBOARD_CACHE_KEY,null);
+  if(cached?.dashboardRows?.length){
+    renderDashboard(
+      aggregateDashboard(cached.dashboardRows),
+      aggregateOriginBreakdown(cached.originRows||[])
+    );
+    renderCasaAtualPanel(
+      aggregateCasaAtual(cached.casaRows||[],normalizeCasaAtualConfig(cached.casaConfig||{}),monthKeys),
+      normalizeCasaAtualConfig(cached.casaConfig||{})
+    );
+    statusEl.textContent='Mostrando o ultimo resumo salvo neste dispositivo enquanto atualizamos.';
+    statusEl.className='dashboard-status';
+  }
   try{
     const casaConfig=S.casaAtualConfig || await loadCasaAtualConfig();
-    const [baseRes,originRes,casaRes] = await Promise.all([
+    const settled = await Promise.allSettled([
       withTimeout(
         db
           .from('lancamentos')
@@ -1873,7 +1929,7 @@ async function refreshDashboard(){
           .eq('user_id',S.user.id)
           .gte('mes_competencia',fromKey)
           .order('mes_competencia',{ascending:true}),
-        12000,
+        DASHBOARD_REMOTE_TIMEOUT_MS,
         'resumo em lancamentos'
       ),
       withTimeout(
@@ -1883,7 +1939,7 @@ async function refreshDashboard(){
           .eq('user_id',S.user.id)
           .gte('mes_analisado',fromKey)
           .order('mes_analisado',{ascending:true}),
-        12000,
+        DASHBOARD_REMOTE_TIMEOUT_MS,
         'resumo temporal'
       ),
       withTimeout(
@@ -1894,56 +1950,55 @@ async function refreshDashboard(){
           .eq('contexto','casa_atual')
           .gte('mes_competencia',fromKey)
           .order('mes_competencia',{ascending:true}),
-        12000,
+        DASHBOARD_REMOTE_TIMEOUT_MS,
         'resultado da casa atual'
+      ),
+      withTimeout(
+        db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+        DASHBOARD_REMOTE_TIMEOUT_MS,
+        'gastos legados'
+      ),
+      withTimeout(
+        db.from('entradas').select('valor,data').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+        DASHBOARD_REMOTE_TIMEOUT_MS,
+        'entradas legadas'
+      ),
+      withTimeout(
+        db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
+        DASHBOARD_REMOTE_TIMEOUT_MS,
+        'gastos de moradia'
+      ),
+      withTimeout(
+        db.from('entradas').select('valor,data').eq('user_id',S.user.id).eq('origem','aluguel').gte('data',fromKey).order('data',{ascending:true}),
+        DASHBOARD_REMOTE_TIMEOUT_MS,
+        'entradas de aluguel'
       )
     ]);
+    const [basePrimary,originPrimary,casaPrimary,legacyGastos,legacyEntradas,legacyMoradia,legacyAluguel]=settled.map(result=>
+      result.status==='fulfilled' ? result.value : { data:null, error:result.reason }
+    );
     let dashboardRows=[];
     let originRows=[];
     let casaRows=[];
 
-    if(!baseRes.error && (baseRes.data||[]).length){
-      dashboardRows=baseRes.data||[];
+    if(!basePrimary.error && (basePrimary.data||[]).length){
+      dashboardRows=basePrimary.data||[];
     }else{
-      const [gastosRes,entradasRes] = await Promise.all([
-        withTimeout(
-          db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
-          12000,
-          'gastos legados'
-        ),
-        withTimeout(
-          db.from('entradas').select('valor,data').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
-          12000,
-          'entradas legadas'
-        )
-      ]);
-      if(gastosRes.error) throw gastosRes.error;
-      if(entradasRes.error) throw entradasRes.error;
-      dashboardRows=buildDashboardRowsFromLegacy(gastosRes.data||[],entradasRes.data||[]);
+      if(legacyGastos.error) throw legacyGastos.error;
+      if(legacyEntradas.error) throw legacyEntradas.error;
+      dashboardRows=buildDashboardRowsFromLegacy(legacyGastos.data||[],legacyEntradas.data||[]);
     }
 
-    if(!originRes.error){
-      originRows=originRes.data||[];
+    if(!originPrimary.error){
+      originRows=originPrimary.data||[];
     }
 
-    if(!casaRes.error && (casaRes.data||[]).length){
-      casaRows=casaRes.data||[];
+    if(!casaPrimary.error && (casaPrimary.data||[]).length){
+      casaRows=casaPrimary.data||[];
     }else{
-      const [moradiaRes,aluguelRes]=await Promise.all([
-        withTimeout(
-          db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
-          12000,
-          'gastos de moradia'
-        ),
-        withTimeout(
-          db.from('entradas').select('valor,data').eq('user_id',S.user.id).eq('origem','aluguel').gte('data',fromKey).order('data',{ascending:true}),
-          12000,
-          'entradas de aluguel'
-        ),
-      ]);
-      if(moradiaRes.error) throw moradiaRes.error;
-      if(aluguelRes.error) throw aluguelRes.error;
-      casaRows=buildCasaAtualRowsFromLegacy(moradiaRes.data||[],aluguelRes.data||[]);
+      if(legacyMoradia.error) throw legacyMoradia.error;
+      if(legacyAluguel.error) throw legacyAluguel.error;
+      casaRows=buildCasaAtualRowsFromLegacy(legacyMoradia.data||[],legacyAluguel.data||[]);
     }
 
     renderDashboard(
@@ -1963,7 +2018,6 @@ async function refreshDashboard(){
       savedAt:new Date().toISOString()
     });
   }catch(ex){
-    const cached=readCache(DASHBOARD_CACHE_KEY,null);
     if(cached?.dashboardRows?.length){
       renderDashboard(
         aggregateDashboard(cached.dashboardRows),
@@ -2167,6 +2221,93 @@ function openDetail(rec,tab){
   q('detail-edit').style.display=tab==='gastos'?'':'none';
   q('detail-delete').textContent=tab==='gastos'?'Excluir gasto':'Excluir entrada';
   q('detail-overlay').classList.add('show');
+}
+
+async function openListFast(tab){
+  if(!db || !(await ensureActiveSession())){
+    toast('Entre novamente para abrir seus registros.','err');
+    return;
+  }
+  const listEl=q('sheet-list'),titleEl=q('sheet-title');
+  const cacheKey=tab==='gastos'?GASTOS_CACHE_KEY:ENTRADAS_CACHE_KEY;
+  const cached=readCache(cacheKey,[]);
+  titleEl.textContent=tab==='gastos'?'Meus Gastos':'Minhas Entradas';
+  q('list-overlay').classList.add('show');
+  q('list-sheet').classList.add('show');
+
+  if(cached.length) renderListRecords(listEl,cached,tab);
+  else listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Carregando...</p></div>';
+
+  try{
+    let items=[];
+    let error=null;
+    if(tab==='gastos'){
+      const [legacy,modern]=await Promise.allSettled([
+        withTimeout(
+          db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
+          LIST_REMOTE_TIMEOUT_MS,
+          'lista de gastos'
+        ),
+        withTimeout(
+          db
+            .from('lancamentos')
+            .select('id,user_id,valor,categoria,subcategoria,necessidade,data_evento,proprietario_economico,forma_pagamento,banco_referencia')
+            .eq('user_id',S.user.id)
+            .eq('tipo','saida')
+            .order('data_evento',{ascending:false})
+            .limit(100),
+          LIST_REMOTE_TIMEOUT_MS,
+          'lista de gastos em lancamentos'
+        )
+      ]);
+      const legacyRes=legacy.status==='fulfilled' ? legacy.value : { data:null, error:legacy.reason };
+      const modernRes=modern.status==='fulfilled' ? modern.value : { data:null, error:modern.reason };
+      items=legacyRes.data||[];
+      error=legacyRes.error;
+      if((error || !items.length) && !modernRes.error && (modernRes.data||[]).length){
+        items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
+        error=null;
+      }
+      if(items.length) writeCache(GASTOS_CACHE_KEY,items);
+    }else{
+      const [legacy,modern]=await Promise.allSettled([
+        withTimeout(
+          db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
+          LIST_REMOTE_TIMEOUT_MS,
+          'lista de entradas'
+        ),
+        withTimeout(
+          db
+            .from('lancamentos')
+            .select('id,user_id,valor,subcategoria,data_evento')
+            .eq('user_id',S.user.id)
+            .eq('tipo','entrada')
+            .order('data_evento',{ascending:false})
+            .limit(100),
+          LIST_REMOTE_TIMEOUT_MS,
+          'lista de entradas em lancamentos'
+        )
+      ]);
+      const legacyRes=legacy.status==='fulfilled' ? legacy.value : { data:null, error:legacy.reason };
+      const modernRes=modern.status==='fulfilled' ? modern.value : { data:null, error:modern.reason };
+      items=legacyRes.data||[];
+      error=legacyRes.error;
+      if((error || !items.length) && !modernRes.error && (modernRes.data||[]).length){
+        items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
+        error=null;
+      }
+      if(items.length) writeCache(ENTRADAS_CACHE_KEY,items);
+    }
+    if(error) throw error;
+    renderListRecords(listEl,items,tab);
+  }catch(ex){
+    if(cached.length){
+      renderListRecords(listEl,cached,tab);
+      toast('Mostrando os ultimos registros salvos neste dispositivo.','err');
+      return;
+    }
+    listEl.innerHTML=`<div class="empty-state"><div class="empty-state-icon">!</div><p>Erro ao carregar registros.</p><p style="font-size:12px">${ex?.message||''}</p></div>`;
+  }
 }
 
 function buildEditCategoryOptions(selected){
