@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Finanças">
-  <meta name="theme-color" content="#4A3C31">
+  <meta name="apple-mobile-web-app-title" content="dindin">
+  <meta name="application-name" content="dindin">
+  <meta name="theme-color" content="#8BA888">
   <link rel="manifest" href="financas-manifest.json">
-  <title>Finanças Pessoais</title>
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+  <link rel="icon" type="image/svg+xml" href="./icons/dindin-mark.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
+  <title>dindin</title>
   <style>
 /* ══════════════════════════════════════════════════
    PALETA MATTE ORGÂNICO
@@ -83,10 +87,13 @@ html,body{
 .auth-logo{text-align:center;margin-bottom:44px}
 .auth-logo-blob{
   width:80px;height:80px;border-radius:24px;
-  background:linear-gradient(145deg,var(--terracota),var(--terracota-dk));
-  box-shadow:var(--shadow-terra);
+  background:linear-gradient(145deg,var(--sage),var(--sage-dk));
+  box-shadow:var(--shadow-sage);
   display:flex;align-items:center;justify-content:center;
-  font-size:38px;margin:0 auto 16px;
+  margin:0 auto 16px;
+}
+.auth-logo-mark{
+  width:42px;height:42px;display:block;
 }
 .auth-logo-title{font-size:26px;font-weight:700;letter-spacing:-.5px;color:var(--text)}
 .auth-logo-sub{font-size:13px;color:var(--text2);margin-top:4px}
@@ -606,11 +613,13 @@ html,body{
   <div class="auth-wrap">
     <div class="auth-box">
       <div class="auth-logo">
-        <div class="auth-logo-blob">💰</div>
-        <div class="auth-logo-title">Finanças</div>
+        <div class="auth-logo-blob">
+          <img src="./icons/dindin-mark.svg" alt="dindin" class="auth-logo-mark">
+        </div>
+        <div class="auth-logo-title">dindin</div>
         <div class="auth-logo-sub">Controle pessoal</div>
       </div>
-      <div class="fields-card config-card">
+      <div class="fields-card config-card" id="config-card">
         <div>
           <label class="lbl">Supabase URL</label>
           <input type="url" id="inp-supabase-url" class="inp" placeholder="https://SEU-PROJETO.supabase.co" autocomplete="off" autocapitalize="none" spellcheck="false">

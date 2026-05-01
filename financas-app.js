@@ -1,6 +1,30 @@
 function getSavedConfig(){
-  try{return JSON.parse(localStorage.getItem(SUPABASE_CONFIG_KEY) || 'null');}
+  try{
+    const current=localStorage.getItem(SUPABASE_CONFIG_KEY);
+    if(current) return JSON.parse(current);
+    const legacy=localStorage.getItem(LEGACY_SUPABASE_CONFIG_KEY);
+    if(!legacy) return null;
+    const parsed=JSON.parse(legacy);
+    if(isValidConfig(parsed)) saveConfig(parsed);
+    return parsed;
+  }
   catch{return null;}
+}
+
+function getEmbeddedConfig(){
+  return EMBEDDED_SUPABASE_CONFIG;
+}
+
+function hasEmbeddedConfig(){
+  return isValidConfig(getEmbeddedConfig());
+}
+
+function resolveSupabaseConfig(){
+  const saved=getSavedConfig();
+  if(isValidConfig(saved)) return saved;
+  const embedded=getEmbeddedConfig();
+  if(isValidConfig(embedded)) return embedded;
+  return null;
 }
 
 function readConfigForm(){
@@ -11,11 +35,11 @@ function readConfigForm(){
 }
 
 function loadConfigForm(){
-  const cfg=getSavedConfig();
+  const cfg=resolveSupabaseConfig();
   if(!cfg) return;
   q('inp-supabase-url').value=cfg.url||'';
   q('inp-supabase-key').value=cfg.anonKey||'';
-  setConfigStatus('Configuracao carregada deste dispositivo.','ok');
+  setConfigStatus(hasEmbeddedConfig()?'Configuracao embarcada no app.':'Configuracao carregada deste dispositivo.','ok');
 }
 
 function saveConfig(cfg){localStorage.setItem(SUPABASE_CONFIG_KEY,JSON.stringify(cfg));}
@@ -28,8 +52,16 @@ function isValidConfig(cfg){
 
 function setConfigStatus(msg,tipo=''){
   const el=q('config-status');
+  if(!el) return;
   el.textContent=msg;
   el.className=`config-status${tipo?` ${tipo}`:''}`;
+}
+
+function syncConfigUi(){
+  const configCard=q('config-card');
+  const authSub=q('auth-logo-sub');
+  if(configCard) configCard.style.display=hasEmbeddedConfig()?'none':'';
+  if(authSub) authSub.textContent=hasEmbeddedConfig()?'Seu dinheiro, organizado com calma.':'Controle pessoal';
 }
 
 function bindAuthListener(){
@@ -46,15 +78,24 @@ function bindAuthListener(){
 }
 
 async function bootSupabase(){
-  const cfg=getSavedConfig();
+  const cfg=resolveSupabaseConfig();
   if(!isValidConfig(cfg)){
     showAuth();
+    syncConfigUi();
     setConfigStatus('Preencha e salve a configuracao do Supabase para entrar.','err');
     return;
   }
   try{
     const { createClient } = supabase;
-    db = createClient(cfg.url,cfg.anonKey);
+    db = createClient(cfg.url,cfg.anonKey,{
+      auth:{
+        persistSession:true,
+        autoRefreshToken:true,
+        detectSessionInUrl:true,
+        storageKey:SUPABASE_AUTH_STORAGE_KEY,
+        storage:window.localStorage,
+      }
+    });
     bindAuthListener();
     const {data:{session}}=await db.auth.getSession();
     if(session){
@@ -63,15 +104,18 @@ async function bootSupabase(){
       await loadCustomSubs();
       refreshDashboardIfVisible();
     }else showAuth();
-    setConfigStatus('Configuracao salva neste dispositivo.','ok');
+    syncConfigUi();
+    setConfigStatus(hasEmbeddedConfig()?'Configuracao embarcada no app.':'Configuracao salva neste dispositivo.','ok');
   }catch(_ex){
     db=null;
     showAuth();
+    syncConfigUi();
     setConfigStatus('Nao foi possivel iniciar o Supabase com essa configuracao.','err');
   }
 }
 
 function setupConfig(){
+  syncConfigUi();
   q('btn-save-config').addEventListener('click',async ()=>{
     const cfg=readConfigForm();
     if(!isValidConfig(cfg)){
@@ -94,7 +138,7 @@ q('form-auth').addEventListener('submit',async e=>{
   const btn=q('btn-auth'),err=q('auth-err');
   if(!db){
     err.style.color='#C0392B';
-    err.textContent='Salve a configuracao do Supabase antes de entrar.';
+    err.textContent='A configuracao do app ainda nao foi concluida.';
     return;
   }
   btn.disabled=true;btn.textContent='...';err.textContent='';
@@ -123,11 +167,14 @@ q('btn-toggle-mode').addEventListener('click',()=>{
   q('auth-err').textContent='';
 });
 
-const logout=()=>db.auth.signOut().then(showAuth);
+const logout=()=>db.auth.signOut().then(()=>{
+  S.user=null;
+  showAuth();
+});
 q('btn-logout').addEventListener('click',logout);
 q('btn-logout-2').addEventListener('click',logout);
 
-function showAuth(){q('screen-auth').classList.remove('hidden');q('screen-app').classList.add('hidden');}
+function showAuth(){syncConfigUi();q('screen-auth').classList.remove('hidden');q('screen-app').classList.add('hidden');}
 function showApp(){q('screen-auth').classList.add('hidden');q('screen-app').classList.remove('hidden');}
 
 function traduzErro(m){

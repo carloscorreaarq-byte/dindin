@@ -1,5 +1,5 @@
 ﻿// Service Worker — Finanças Pessoais
-const CACHE = 'financas-v4';
+const CACHE = 'financas-v6';
 const APP_SHELL = [
   './index.html',
   './financas-manifest.json',
@@ -7,6 +7,10 @@ const APP_SHELL = [
   './financas-core.js',
   './financas-app.js',
   './financas-init.js',
+  './icons/dindin-mark.svg',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', e => {
