@@ -610,6 +610,7 @@ Registro de execucao:
 - `2026-05-01`: adicionados timeout explicito nas leituras/escritas principais do Supabase e cache local dos ultimos dados de resumo, gastos e entradas, permitindo fallback visivel quando a conexao oscilar; o cache do app foi atualizado para `financas-v15`
 - `2026-05-01`: concluida a primeira rodada da Fase 3 - Casa atual: gastos de `Moradia` ganharam reforco visual de contexto, o `Resumo` passou a exibir painel proprio de custo real versus sublocacao fixa, foi criado o fluxo de configuracao da sublocacao no app com fallback local e sincronizacao opcional via `contratos_sublocacao`, e o projeto recebeu o script `financas-fase3-casa-atual.sql`; o cache do app foi atualizado para `financas-v16`
 - `2026-05-01`: refinada a regra da Casa atual: o valor salvo da sublocacao passou a ser tratado como media de referencia, e cada mes deve ser validado pelas entradas classificadas como `Aluguel`; quando a validacao faltar, o painel mostra leitura provisoria pela media; o cache do app foi atualizado para `financas-v17`
+- `2026-05-01`: iniciada e consolidada a Fase 4 - Alya: a aba visual do modulo virou painel analitico com saldo segmentado entre construtora e financiamento, total pago, numero de eventos em aberto/pagos e destaque visual do proximo reforco; o fluxo base passou a aceitar cadastro em lote, o historico antigo virou acao secundaria para uso pontual e o registro de pagamento ja aplica fator de atualizacao para futuras parcelas abertas; o projeto recebeu o script `financas-fase4-alya.sql` e o cache do app foi atualizado para `financas-v18`
 
 ### Fase 0 - Saneamento da base atual
 
@@ -647,10 +648,10 @@ Registro de execucao:
 
 ### Fase 4 - Alya
 
-- [ ] cadastrar fluxo base do contrato
-- [ ] cadastrar historico de parcelas pagas
-- [ ] implementar regra de fator de atualizacao
-- [ ] construir painel de saldo, faltante e projecao
+- [x] cadastrar fluxo base do contrato
+- [x] cadastrar historico de parcelas pagas
+- [x] implementar regra de fator de atualizacao
+- [x] construir painel de saldo, faltante e projecao
 
 ### Fase 5 - Mae
 
@@ -690,8 +691,8 @@ O sistema so deve ser considerado pronto para uso analitico quando:
 
 O melhor proximo passo de implementacao e este:
 
-1. cadastrar o fluxo base do contrato do Alya
-2. criar o cadastro do historico de parcelas pagas do Alya
-3. implementar o primeiro painel de saldo, faltante e projecao do Alya
+1. aplicar o SQL do Alya no Supabase
+2. alimentar o primeiro fluxo real do contrato
+3. validar o painel com dados reais antes de seguir para a mae
 
-Se quisermos seguir com eficiencia, a proxima entrega pratica deve ser a modelagem SQL inicial do Alya, seguida da tela de cadastro do fluxo contratual base.
+Se quisermos seguir com eficiencia, a proxima entrega pratica deve ser aplicar o SQL do Alya no Supabase, testar um primeiro fluxo real e depois seguir para a Fase 5 da mae.

@@ -133,6 +133,7 @@ function setupConfig(){
 function setupDashboard(){
   q('btn-dashboard-refresh').addEventListener('click',()=>refreshDashboard());
   setupCasaAtual();
+  setupAlya();
 }
 
 async function ensureActiveSession(){
@@ -322,6 +323,482 @@ function setupCasaAtual(){
   q('casa-salvar').addEventListener('click',saveCasaAtualConfig);
 }
 
+const ALYA_CONSTRUTORA_BLOCOS = new Set(['entrada','mensal','anual','reforco','intermediaria']);
+const ALYA_REFORCO_BLOCOS = new Set(['reforco','anual','intermediaria']);
+const ALYA_REAJUSTE_BLOCOS = new Set(['mensal','anual','reforco','financiamento','intermediaria']);
+
+function alyaSegmento(bloco){
+  return bloco==='financiamento' ? 'financiamento' : 'construtora';
+}
+
+function alyaBlocoLabel(bloco){
+  const labels={
+    entrada:'Entrada',
+    mensal:'Mensal',
+    anual:'Anual',
+    reforco:'Reforco',
+    financiamento:'Financiamento',
+    intermediaria:'Intermediaria',
+  };
+  return labels[bloco] || bloco || 'Evento';
+}
+
+function addPeriodToDate(dateText,frequency,step){
+  const date=new Date(`${dateText}T12:00:00`);
+  if(Number.isNaN(date.getTime())) return null;
+  if(frequency==='mensal') date.setMonth(date.getMonth()+step);
+  else if(frequency==='anual') date.setFullYear(date.getFullYear()+step);
+  return date.toISOString().slice(0,10);
+}
+
+function moneyInput(id){
+  return Number(q(id)?.value || 0);
+}
+
+function alyaEffectiveValue(item){
+  return Number(item?.valor_atual ?? item?.valor_base ?? 0) || 0;
+}
+
+async function ensureAlyaEmpreendimento(){
+  if(!db || !(await ensureActiveSession())) throw new Error('Entre novamente para acessar o Alya.');
+  const existing=await withTimeout(
+    db.from('empreendimentos').select('id,nome,unidade,ativo').eq('user_id',S.user.id).eq('ativo',true).order('created_at',{ascending:false}).limit(1),
+    12000,
+    'empreendimento Alya'
+  );
+  if(existing.error) throw existing.error;
+  if((existing.data||[]).length) return existing.data[0];
+  const payload={
+    user_id:S.user.id,
+    nome:'Alya Paraiso',
+    unidade:'Unid 122',
+    ativo:true,
+  };
+  const created=await withTimeout(
+    db.from('empreendimentos').insert(payload).select('id,nome,unidade,ativo').single(),
+    12000,
+    'criacao do empreendimento Alya'
+  );
+  if(created.error) throw created.error;
+  return created.data;
+}
+
+function setAlyaFormVisibility(targetId){
+  ['alya-base-form','alya-payment-form','alya-history-form'].forEach(id=>{
+    const el=q(id);
+    if(el) el.classList.toggle('hidden',id!==targetId || !targetId);
+  });
+}
+
+function fillAlyaPaymentSelects(flow){
+  const openItems=(flow||[])
+    .filter(item=>item.status!=='pago' && item.status!=='cancelado')
+    .sort((a,b)=>String(a.data_vencimento_base).localeCompare(String(b.data_vencimento_base)));
+
+  const renderOptions=(items,placeholder)=>[
+    `<option value="">${placeholder}</option>`,
+    ...items.map(item=>`<option value="${item.id}">${alyaBlocoLabel(item.bloco)} • ${item.data_vencimento_base} • ${moneyBR(alyaEffectiveValue(item))}</option>`)
+  ].join('');
+
+  q('alya-payment-item').innerHTML=renderOptions(openItems,'Selecionar evento em aberto...');
+  q('alya-history-item').innerHTML=renderOptions(openItems,'Selecionar evento antigo em aberto...');
+}
+
+function aggregateAlyaPanel(flow,pagamentos){
+  const paidMap=new Map((pagamentos||[]).map(item=>[item.alya_fluxo_base_id,item]));
+  let totalPago=0;
+  let abertas=0;
+  let pagas=0;
+  let saldoConstrutora=0;
+  let saldoFinanciamento=0;
+  let nextReforco=null;
+
+  (pagamentos||[]).forEach(item=>{
+    totalPago += Number(item.valor_pago)||0;
+  });
+
+  (flow||[]).forEach(item=>{
+    const value=alyaEffectiveValue(item);
+    if(item.status==='pago'){
+      pagas += 1;
+    }else if(item.status!=='cancelado'){
+      abertas += 1;
+      if(alyaSegmento(item.bloco)==='financiamento') saldoFinanciamento += value;
+      else saldoConstrutora += value;
+      if(ALYA_REFORCO_BLOCOS.has(item.bloco)){
+        if(!nextReforco || String(item.data_vencimento_base) < String(nextReforco.data_vencimento_base)){
+          nextReforco=item;
+        }
+      }
+    }
+    if(item.status==='pago' && !paidMap.has(item.id)){
+      totalPago += value;
+    }
+  });
+
+  return {
+    totalPago,
+    saldoConstrutora,
+    saldoFinanciamento,
+    saldoTotal:saldoConstrutora+saldoFinanciamento,
+    abertas,
+    pagas,
+    nextReforco,
+  };
+}
+
+function renderAlyaPanel(summary,flow,empreendimento){
+  const statusEl=q('alya-status');
+  const metricsEl=q('alya-metrics');
+  const nextEl=q('alya-next-reforco');
+  const segEl=q('alya-segments');
+  if(!statusEl || !metricsEl || !nextEl || !segEl) return;
+
+  if(!empreendimento){
+    statusEl.textContent='Cadastre o fluxo base do Alya para iniciar o painel.';
+    statusEl.className='dashboard-status';
+    metricsEl.innerHTML='<div class="summary-card wide"><div class="summary-note">Quando voce salvar o primeiro bloco do fluxo contratual, o painel Alya passa a consolidar saldo, parcelas e marcos futuros.</div></div>';
+    nextEl.innerHTML='<div class="dash-empty">Sem reforcos cadastrados ainda.</div>';
+    segEl.innerHTML='<div class="dash-empty">Sem saldo consolidado enquanto o fluxo base nao for cadastrado.</div>';
+    return;
+  }
+
+  statusEl.textContent=summary.abertas
+    ? `${empreendimento.nome} ${empreendimento.unidade ? `• ${empreendimento.unidade}` : ''} com ${summary.abertas} evento(s) em aberto.`
+    : `${empreendimento.nome} ${empreendimento.unidade ? `• ${empreendimento.unidade}` : ''} sem eventos em aberto no momento.`;
+  statusEl.className='dashboard-status ok';
+
+  metricsEl.innerHTML=`
+    <div class="summary-card">
+      <div class="summary-kicker">Total pago</div>
+      <div class="summary-value pos">${moneyBR(summary.totalPago)}</div>
+      <div class="summary-note">Tudo que ja foi marcado como pago.</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Parcelas em aberto</div>
+      <div class="summary-value">${summary.abertas}</div>
+      <div class="summary-note">Eventos ainda pendentes no fluxo.</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Eventos pagos</div>
+      <div class="summary-value">${summary.pagas}</div>
+      <div class="summary-note">Eventos ja quitados no contrato.</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Saldo construtora</div>
+      <div class="summary-value neg">${moneyBR(summary.saldoConstrutora)}</div>
+      <div class="summary-note">Mensais, reforcos, anuais e demais parcelas da construtora.</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Saldo financiamento</div>
+      <div class="summary-value neg">${moneyBR(summary.saldoFinanciamento)}</div>
+      <div class="summary-note">Segmento separado do saldo da construtora.</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Saldo total</div>
+      <div class="summary-value neg">${moneyBR(summary.saldoTotal)}</div>
+      <div class="summary-note">Construtora + financiamento.</div>
+    </div>
+  `;
+
+  if(summary.nextReforco){
+    nextEl.innerHTML=`
+      <div class="next-highlight">
+        <div>
+          <div class="next-highlight-kicker">${alyaBlocoLabel(summary.nextReforco.bloco)}</div>
+          <div class="next-highlight-value">${moneyBR(alyaEffectiveValue(summary.nextReforco))}</div>
+          <div class="dash-card-subline">${summary.nextReforco.descricao || 'Parcela extra em aberto'}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="next-highlight-date">${dateBR(summary.nextReforco.data_vencimento_base)}</div>
+          <div class="dash-card-subline">Proximo marco extra</div>
+        </div>
+      </div>
+    `;
+  }else{
+    nextEl.innerHTML='<div class="dash-empty">Nenhuma parcela de reforco em aberto encontrada.</div>';
+  }
+
+  segEl.innerHTML=`
+    <div class="seg-row">
+      <div>
+        <div class="seg-name">Construtora</div>
+        <div class="seg-sub">Mensais, reforcos, anuais, entrada e intermediarias abertas.</div>
+      </div>
+      <div class="seg-val neg">${moneyBR(summary.saldoConstrutora)}</div>
+    </div>
+    <div class="seg-row">
+      <div>
+        <div class="seg-name">Financiamento</div>
+        <div class="seg-sub">Saldo visivel separadamente no painel.</div>
+      </div>
+      <div class="seg-val neg">${moneyBR(summary.saldoFinanciamento)}</div>
+    </div>
+    <div class="seg-row">
+      <div>
+        <div class="seg-name">Total em aberto</div>
+        <div class="seg-sub">${summary.abertas} parcela(s) / evento(s) ainda pendentes.</div>
+      </div>
+      <div class="seg-val neg">${moneyBR(summary.saldoTotal)}</div>
+    </div>
+  `;
+
+  fillAlyaPaymentSelects(flow||[]);
+}
+
+async function refreshAlyaDashboard(){
+  const statusEl=q('alya-status');
+  if(!statusEl) return;
+  if(!db || !(await ensureActiveSession())){
+    statusEl.textContent='Entre no app para carregar o painel do Alya.';
+    statusEl.className='dashboard-status err';
+    return;
+  }
+  statusEl.textContent='Atualizando painel Alya...';
+  statusEl.className='dashboard-status';
+  try{
+    const empreendimentoRes=await withTimeout(
+      db.from('empreendimentos').select('id,nome,unidade,ativo').eq('user_id',S.user.id).eq('ativo',true).order('created_at',{ascending:false}).limit(1),
+      12000,
+      'empreendimento Alya'
+    );
+    if(empreendimentoRes.error) throw empreendimentoRes.error;
+    const empreendimento=(empreendimentoRes.data||[])[0] || null;
+    if(!empreendimento){
+      renderAlyaPanel({totalPago:0,saldoConstrutora:0,saldoFinanciamento:0,saldoTotal:0,abertas:0,pagas:0,nextReforco:null},[],null);
+      writeCache(ALYA_CACHE_KEY,{flow:[],pagamentos:[],empreendimento:null});
+      return;
+    }
+
+    const [flowRes,pagRes]=await Promise.all([
+      withTimeout(
+        db.from('alya_fluxo_base').select('*').eq('user_id',S.user.id).eq('empreendimento_id',empreendimento.id).order('data_vencimento_base',{ascending:true}).order('ordem',{ascending:true}),
+        12000,
+        'fluxo Alya'
+      ),
+      withTimeout(
+        db.from('alya_pagamentos').select('*').eq('user_id',S.user.id).eq('empreendimento_id',empreendimento.id).order('data_pagamento',{ascending:false}),
+        12000,
+        'pagamentos Alya'
+      )
+    ]);
+    if(flowRes.error) throw flowRes.error;
+    if(pagRes.error) throw pagRes.error;
+
+    const flow=flowRes.data||[];
+    const pagamentos=pagRes.data||[];
+    renderAlyaPanel(aggregateAlyaPanel(flow,pagamentos),flow,empreendimento);
+    writeCache(ALYA_CACHE_KEY,{flow,pagamentos,empreendimento});
+  }catch(ex){
+    const cached=readCache(ALYA_CACHE_KEY,null);
+    if(cached){
+      renderAlyaPanel(
+        aggregateAlyaPanel(cached.flow||[],cached.pagamentos||[]),
+        cached.flow||[],
+        cached.empreendimento||null
+      );
+      statusEl.textContent='Mostrando o ultimo painel Alya salvo neste dispositivo.';
+      statusEl.className='dashboard-status err';
+      return;
+    }
+    const msg=ex?.message||'';
+    statusEl.textContent=(msg.includes('empreendimentos') || msg.includes('alya_fluxo_base') || msg.includes('alya_pagamentos'))
+      ? 'Aplique primeiro o SQL da Fase 4 do Alya para habilitar este modulo.'
+      : 'Nao foi possivel carregar o Alya.';
+    statusEl.className='dashboard-status err';
+  }
+}
+
+function refreshAlyaIfVisible(){
+  const tab=q('tab-investimentos');
+  if(tab && tab.classList.contains('active')) refreshAlyaDashboard();
+}
+
+async function saveAlyaBaseFlow(){
+  if(!db || !(await ensureActiveSession())){toast('Entre novamente para salvar o fluxo do Alya.','err');return;}
+  const descricao=q('alya-base-descricao').value.trim();
+  const bloco=q('alya-base-bloco').value;
+  const frequencia=q('alya-base-frequencia').value;
+  const dataBase=q('alya-base-data').value;
+  const quantidade=Number(q('alya-base-quantidade').value||0) || 1;
+  const valorBase=moneyInput('alya-base-valor');
+  const ordemInicial=Number(q('alya-base-ordem').value||0) || 1;
+  if(!descricao){toast('Descreva o bloco do Alya.','err');return;}
+  if(!dataBase){toast('Informe o primeiro vencimento.','err');return;}
+  if(!valorBase || valorBase <= 0){toast('Informe o valor base.','err');return;}
+  if(!quantidade || quantidade < 1){toast('Informe a quantidade de eventos.','err');return;}
+
+  const btn=q('btn-alya-salvar-base');
+  btn.disabled=true;
+  btn.textContent='Salvando...';
+  try{
+    const empreendimento=await ensureAlyaEmpreendimento();
+    const rows=[];
+    for(let i=0;i<quantidade;i++){
+      rows.push({
+        id:newUuid(),
+        user_id:S.user.id,
+        empreendimento_id:empreendimento.id,
+        bloco,
+        descricao:quantidade > 1 ? `${descricao} ${i+1}/${quantidade}` : descricao,
+        ordem:ordemInicial + i,
+        data_vencimento_base:addPeriodToDate(dataBase,frequencia,i) || dataBase,
+        valor_base:Number(valorBase.toFixed(2)),
+        valor_atual:Number(valorBase.toFixed(2)),
+        status:'aberto',
+      });
+    }
+    const res=await withTimeout(
+      db.from('alya_fluxo_base').insert(rows),
+      12000,
+      'salvamento do fluxo base do Alya'
+    );
+    if(res.error) throw res.error;
+    toast('Fluxo base do Alya salvo!','ok');
+    q('alya-base-descricao').value='';
+    q('alya-base-data').value='';
+    q('alya-base-quantidade').value='';
+    q('alya-base-valor').value='';
+    q('alya-base-ordem').value='';
+    setAlyaFormVisibility(null);
+    refreshAlyaIfVisible();
+  }catch(ex){
+    const msg=ex?.message||'';
+    if(msg.includes('empreendimentos') || msg.includes('alya_fluxo_base') || msg.includes('alya_pagamentos')){
+      toast('Rode antes o SQL da Fase 4 do Alya no Supabase.','err');
+    }else{
+      toast(`Nao foi possivel salvar o fluxo do Alya.${msg?` ${msg}`:''}`,'err');
+    }
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Salvar fluxo base';
+  }
+}
+
+async function applyAlyaPayment(itemId,date,value,notes,isHistoric=false){
+  if(!db || !(await ensureActiveSession())) throw new Error('Entre novamente para salvar o pagamento.');
+  const empreendimento=await ensureAlyaEmpreendimento();
+  const flowRes=await withTimeout(
+    db.from('alya_fluxo_base').select('*').eq('user_id',S.user.id).eq('empreendimento_id',empreendimento.id).order('data_vencimento_base',{ascending:true}).order('ordem',{ascending:true}),
+    12000,
+    'leitura do fluxo Alya'
+  );
+  if(flowRes.error) throw flowRes.error;
+  const flow=flowRes.data||[];
+  const current=flow.find(item=>item.id===itemId);
+  if(!current) throw new Error('Evento do Alya nao encontrado.');
+
+  const paymentPayload={
+    id:newUuid(),
+    user_id:S.user.id,
+    empreendimento_id:empreendimento.id,
+    alya_fluxo_base_id:current.id,
+    data_pagamento:date,
+    valor_pago:Number(value.toFixed(2)),
+    observacoes:isHistoric ? `Historico antigo. ${notes || ''}`.trim() : (notes || null),
+  };
+  const payRes=await withTimeout(
+    db.from('alya_pagamentos').insert(paymentPayload),
+    12000,
+    'registro de pagamento Alya'
+  );
+  if(payRes.error) throw payRes.error;
+
+  const currentUpdate=await withTimeout(
+    db.from('alya_fluxo_base').update({
+      status:'pago',
+      valor_atual:Number(value.toFixed(2)),
+    }).eq('user_id',S.user.id).eq('id',current.id),
+    12000,
+    'fechamento do evento pago'
+  );
+  if(currentUpdate.error) throw currentUpdate.error;
+
+  if(current.bloco==='mensal'){
+    const previousPaid=flow
+      .filter(item=>item.bloco==='mensal' && item.id!==current.id && item.status==='pago' && String(item.data_vencimento_base) < String(current.data_vencimento_base))
+      .sort((a,b)=>String(b.data_vencimento_base).localeCompare(String(a.data_vencimento_base)))[0];
+    const previousValue=previousPaid ? alyaEffectiveValue(previousPaid) : 0;
+    const factor=previousValue > 0 ? Number((value / previousValue).toFixed(8)) : null;
+    if(factor && Number.isFinite(factor) && factor > 0 && Math.abs(factor - 1) > 0.000001){
+      const futureRows=flow.filter(item=>
+        item.status==='aberto' &&
+        ALYA_REAJUSTE_BLOCOS.has(item.bloco) &&
+        String(item.data_vencimento_base) > String(current.data_vencimento_base)
+      );
+      for(const future of futureRows){
+        const nextValue=Number((alyaEffectiveValue(future) * factor).toFixed(2));
+        const res=await withTimeout(
+          db.from('alya_fluxo_base').update({valor_atual:nextValue}).eq('user_id',S.user.id).eq('id',future.id),
+          12000,
+          'reajuste das parcelas futuras do Alya'
+        );
+        if(res.error) throw res.error;
+      }
+      await withTimeout(
+        db.from('alya_pagamentos').update({fator_vs_parcela_anterior:factor}).eq('user_id',S.user.id).eq('id',paymentPayload.id),
+        12000,
+        'registro do fator de reajuste Alya'
+      );
+    }
+  }
+}
+
+async function saveAlyaPayment(isHistoric=false){
+  const prefix=isHistoric ? 'alya-history' : 'alya-payment';
+  const itemId=q(`${prefix}-item`).value;
+  const date=q(`${prefix}-date`).value;
+  const value=Number(q(`${prefix}-value`).value||0);
+  const notes=isHistoric ? 'Cadastro pontual de historico anterior ao app.' : q('alya-payment-notes').value.trim();
+  if(!itemId){toast('Selecione o evento do Alya.','err');return;}
+  if(!date){toast('Informe a data do pagamento.','err');return;}
+  if(!value || value <= 0){toast('Informe o valor pago.','err');return;}
+
+  const btn=q(isHistoric ? 'btn-alya-salvar-history' : 'btn-alya-salvar-payment');
+  btn.disabled=true;
+  btn.textContent='Salvando...';
+  try{
+    await applyAlyaPayment(itemId,date,value,notes,isHistoric);
+    toast(isHistoric ? 'Historico antigo registrado!' : 'Pagamento do Alya registrado!','ok');
+    q(`${prefix}-item`).value='';
+    q(`${prefix}-date`).value='';
+    q(`${prefix}-value`).value='';
+    if(!isHistoric) q('alya-payment-notes').value='';
+    if(isHistoric) setAlyaFormVisibility(null);
+    refreshAlyaIfVisible();
+  }catch(ex){
+    const msg=ex?.message||'';
+    if(msg.includes('empreendimentos') || msg.includes('alya_fluxo_base') || msg.includes('alya_pagamentos')){
+      toast('Rode antes o SQL da Fase 4 do Alya no Supabase.','err');
+    }else{
+      toast(`Nao foi possivel registrar o pagamento do Alya.${msg?` ${msg}`:''}`,'err');
+    }
+  }finally{
+    btn.disabled=false;
+    btn.textContent=isHistoric ? 'Registrar historico antigo' : 'Registrar pagamento';
+  }
+}
+
+function setupAlya(){
+  if(!q('btn-alya-refresh')) return;
+  q('btn-alya-refresh').addEventListener('click',refreshAlyaDashboard);
+  q('btn-alya-toggle-base').addEventListener('click',()=>{
+    const hidden=q('alya-base-form').classList.contains('hidden');
+    setAlyaFormVisibility(hidden ? 'alya-base-form' : null);
+  });
+  q('btn-alya-toggle-payment').addEventListener('click',()=>{
+    const hidden=q('alya-payment-form').classList.contains('hidden');
+    setAlyaFormVisibility(hidden ? 'alya-payment-form' : null);
+  });
+  q('btn-alya-toggle-history').addEventListener('click',()=>{
+    const hidden=q('alya-history-form').classList.contains('hidden');
+    setAlyaFormVisibility(hidden ? 'alya-history-form' : null);
+  });
+  q('btn-alya-salvar-base').addEventListener('click',saveAlyaBaseFlow);
+  q('btn-alya-salvar-payment').addEventListener('click',()=>saveAlyaPayment(false));
+  q('btn-alya-salvar-history').addEventListener('click',()=>saveAlyaPayment(true));
+}
+
 function buildMonthKeys(fromDate,count=6){
   const keys=[];
   for(let i=0;i<count;i++){
@@ -467,6 +944,7 @@ function setupNav(){
       if(btn.classList.contains('active')){
         if(tabSupportsList(btn.dataset.tab)) openList(btn.dataset.tab);
         else if(btn.dataset.tab==='dashboard') refreshDashboard();
+        else if(btn.dataset.tab==='investimentos') refreshAlyaDashboard();
         return;
       }
       document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
@@ -474,6 +952,7 @@ function setupNav(){
       btn.classList.add('active');
       q(`tab-${btn.dataset.tab}`).classList.add('active');
       if(btn.dataset.tab==='dashboard') refreshDashboard();
+      if(btn.dataset.tab==='investimentos') refreshAlyaDashboard();
     });
   });
 }
@@ -484,6 +963,9 @@ function setDates(){
   const now=new Date(),local=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString();
   q('inp-data-gasto').value=local.slice(0,16);
   q('inp-data-entrada').value=local.slice(0,10);
+  if(q('alya-payment-date')) q('alya-payment-date').value=local.slice(0,10);
+  if(q('alya-history-date')) q('alya-history-date').value=local.slice(0,10);
+  if(q('alya-base-data')) q('alya-base-data').value=local.slice(0,10);
 }
 
 function bindValor(inpId,numId,cb){
@@ -499,6 +981,11 @@ function fmt(c){return Math.floor(c/100).toLocaleString('pt-BR')+','+String(c%10
 
 function moneyBR(value){
   return value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+
+function dateBR(value){
+  if(!value) return '--';
+  return new Date(`${String(value).slice(0,10)}T12:00:00`).toLocaleDateString('pt-BR');
 }
 
 function localDateTimeToIso(value){

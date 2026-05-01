@@ -253,6 +253,36 @@ html,body{
 }
 .dash-card-sub{font-size:12px;color:var(--text2)}
 .dash-card-subline{font-size:11px;color:var(--text3);margin-top:3px}
+.dash-actions-wrap{display:flex;flex-wrap:wrap;gap:8px}
+.dash-form{
+  display:flex;flex-direction:column;gap:12px;
+}
+.dash-form.hidden{display:none}
+.next-highlight{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:14px;border-radius:16px;background:linear-gradient(135deg,#F7F1E8,#FFF9F0);
+  border:1px solid rgba(209,183,135,.28);
+}
+.next-highlight-value{
+  font-size:24px;font-weight:800;letter-spacing:-.6px;color:var(--cafe);
+}
+.next-highlight-date{
+  font-size:13px;font-weight:700;color:var(--text);
+}
+.next-highlight-kicker{
+  font-size:10px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;
+}
+.seg-list{display:flex;flex-direction:column;gap:10px}
+.seg-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 0;border-bottom:1px solid var(--border);
+}
+.seg-row:last-child{border-bottom:none;padding-bottom:0}
+.seg-name{font-size:13px;font-weight:700;color:var(--text)}
+.seg-sub{font-size:11px;color:var(--text3);margin-top:3px}
+.seg-val{font-size:14px;font-weight:800;color:var(--text)}
+.seg-val.pos{color:var(--sage-dk)}
+.seg-val.neg{color:var(--terracota-dk)}
 .bar-list{display:flex;flex-direction:column;gap:10px}
 .bar-row{display:flex;flex-direction:column;gap:6px}
 .bar-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -925,10 +955,152 @@ html,body{
 
   <!-- ── INVESTIMENTOS ── -->
   <div id="tab-investimentos" class="tab-pane">
-    <div class="coming-soon">
-      <div class="coming-soon-icon">📈</div>
-      <h2>Em breve</h2>
-      <p>Painel de investimentos em desenvolvimento</p>
+    <div class="dashboard-scroll">
+      <div class="dashboard-head">
+        <div>
+          <div class="dashboard-title">Alya</div>
+          <div class="dashboard-sub">Saldo, parcelas em aberto e proximos marcos do apartamento</div>
+        </div>
+        <div class="dashboard-actions">
+          <button type="button" id="btn-alya-refresh" class="dashboard-chip">Atualizar</button>
+        </div>
+      </div>
+
+      <div class="dashboard-status" id="alya-status"></div>
+
+      <div class="summary-grid" id="alya-metrics"></div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div>
+            <div class="dash-card-title">Proximo reforco</div>
+            <div class="dash-card-sub">Valor e data da proxima parcela extra em aberto</div>
+          </div>
+        </div>
+        <div id="alya-next-reforco"></div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div>
+            <div class="dash-card-title">Saldo segmentado</div>
+            <div class="dash-card-sub">Separacao entre construtora, financiamento e saldo total</div>
+          </div>
+        </div>
+        <div class="seg-list" id="alya-segments"></div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div>
+            <div class="dash-card-title">Fluxo contratual</div>
+            <div class="dash-card-sub">Cadastre os eventos base do contrato em lotes</div>
+          </div>
+          <div class="dash-actions-wrap">
+            <button type="button" id="btn-alya-toggle-base" class="dashboard-chip">Novo fluxo</button>
+            <button type="button" id="btn-alya-toggle-payment" class="dashboard-chip">Pagamento</button>
+          </div>
+        </div>
+
+        <div id="alya-base-form" class="dash-form hidden">
+          <div>
+            <label class="lbl">Descricao</label>
+            <input type="text" class="inp" id="alya-base-descricao" placeholder="Ex: Mensais obra, reforco anual, financiamento">
+          </div>
+          <div class="row">
+            <div class="half">
+              <label class="lbl">Bloco</label>
+              <select class="sel" id="alya-base-bloco">
+                <option value="mensal">Mensal</option>
+                <option value="reforco">Reforco</option>
+                <option value="anual">Anual</option>
+                <option value="financiamento">Financiamento</option>
+                <option value="entrada">Entrada</option>
+                <option value="intermediaria">Intermediaria</option>
+              </select>
+            </div>
+            <div class="half">
+              <label class="lbl">Frequencia</label>
+              <select class="sel" id="alya-base-frequencia">
+                <option value="unica">Unica</option>
+                <option value="mensal">Mensal</option>
+                <option value="anual">Anual</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div class="half">
+              <label class="lbl">1o vencimento</label>
+              <input type="date" class="inp" id="alya-base-data">
+            </div>
+            <div class="half">
+              <label class="lbl">Quantidade</label>
+              <input type="number" min="1" max="240" class="inp" id="alya-base-quantidade" placeholder="Ex: 24">
+            </div>
+          </div>
+          <div class="row">
+            <div class="half">
+              <label class="lbl">Valor base</label>
+              <input type="number" step="0.01" min="0.01" class="inp" id="alya-base-valor" placeholder="Ex: 1850.00">
+            </div>
+            <div class="half">
+              <label class="lbl">Ordem inicial</label>
+              <input type="number" min="1" class="inp" id="alya-base-ordem" placeholder="Ex: 1">
+            </div>
+          </div>
+          <button type="button" id="btn-alya-salvar-base" class="btn btn-cafe btn-save">Salvar fluxo base</button>
+        </div>
+
+        <div id="alya-payment-form" class="dash-form hidden">
+          <div>
+            <label class="lbl">Evento do fluxo</label>
+            <select class="sel" id="alya-payment-item"></select>
+          </div>
+          <div class="row">
+            <div class="half">
+              <label class="lbl">Data do pagamento</label>
+              <input type="date" class="inp" id="alya-payment-date">
+            </div>
+            <div class="half">
+              <label class="lbl">Valor pago</label>
+              <input type="number" step="0.01" min="0.01" class="inp" id="alya-payment-value" placeholder="Ex: 1974.22">
+            </div>
+          </div>
+          <div>
+            <label class="lbl">Observacoes</label>
+            <input type="text" class="inp" id="alya-payment-notes" placeholder="Ex: parcela mensal de abril">
+          </div>
+          <button type="button" id="btn-alya-salvar-payment" class="btn btn-sage btn-save">Registrar pagamento</button>
+        </div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div>
+            <div class="dash-card-title">Historico antigo</div>
+            <div class="dash-card-sub">Use so para marcar parcelas antigas que ja estavam pagas antes do app</div>
+          </div>
+          <button type="button" id="btn-alya-toggle-history" class="dashboard-chip">Usar agora</button>
+        </div>
+        <div id="alya-history-form" class="dash-form hidden">
+          <div class="mini-note">Este cadastro e pontual. Depois de alimentar o passado, o fluxo normal deve seguir pelo registro de pagamento acima.</div>
+          <div>
+            <label class="lbl">Evento antigo</label>
+            <select class="sel" id="alya-history-item"></select>
+          </div>
+          <div class="row">
+            <div class="half">
+              <label class="lbl">Data em que foi pago</label>
+              <input type="date" class="inp" id="alya-history-date">
+            </div>
+            <div class="half">
+              <label class="lbl">Valor pago</label>
+              <input type="number" step="0.01" min="0.01" class="inp" id="alya-history-value" placeholder="Ex: 1650.00">
+            </div>
+          </div>
+          <button type="button" id="btn-alya-salvar-history" class="btn btn-ghost">Registrar historico antigo</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1070,7 +1242,7 @@ html,body{
           <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>
         </svg>
       </div>
-      <span class="nav-lbl">Invest.</span>
+      <span class="nav-lbl">Alya</span>
     </button>
     <button class="nav-btn" data-tab="parcelas" id="nav-parcelas">
       <div class="nav-ico-wrap">
