@@ -782,6 +782,21 @@ function aggregateDashboard(rows){
   return months;
 }
 
+function aggregateOriginBreakdown(rows){
+  const months={};
+  rows.forEach(row=>{
+    const key=row.mes_analisado;
+    if(!key) return;
+    months[key]={
+      custo_herdado_mes:Number(row.custo_herdado_mes)||0,
+      gasto_novo_no_mes:Number(row.gasto_novo_no_mes)||0,
+      gasto_jogado_para_futuro_no_mes:Number(row.gasto_jogado_para_futuro_no_mes)||0,
+      parcelamentos_ativos_mes:Number(row.parcelamentos_ativos_mes)||0,
+    };
+  });
+  return months;
+}
+
 function renderBarList(containerId,items,tone=''){
   const el=q(containerId);
   if(!items.length){
@@ -802,7 +817,7 @@ function renderBarList(containerId,items,tone=''){
   `).join('');
 }
 
-function renderDashboard(data){
+function renderDashboard(data,originData={}){
   const metricsEl=q('dashboard-metrics');
   const monthsEl=q('dashboard-months');
   const statusEl=q('dashboard-status');
@@ -824,10 +839,18 @@ function renderDashboard(data){
   const previousKey=keys[keys.length-2];
   const current=data[currentKey];
   const previous=previousKey?data[previousKey]:{entradas:0,saidas:0};
+  const currentOrigin=originData[currentKey] || {
+    custo_herdado_mes:0,
+    gasto_novo_no_mes:current.saidas||0,
+    gasto_jogado_para_futuro_no_mes:0,
+    parcelamentos_ativos_mes:0,
+  };
   const saldo=current.entradas-current.saidas;
 
   subtitleEl.textContent=`Mes atual: ${monthLabel(currentKey)}`;
-  statusEl.textContent='Dados consolidados a partir de lancamentos.';
+  statusEl.textContent=currentOrigin.parcelamentos_ativos_mes
+    ? `Resumo com ${currentOrigin.parcelamentos_ativos_mes} parcelamento(s) ativo(s) impactando o mes.`
+    : 'Dados consolidados a partir de lancamentos.';
   statusEl.className='dashboard-status ok';
 
   metricsEl.innerHTML=`
@@ -845,6 +868,21 @@ function renderDashboard(data){
       <div class="summary-kicker">Saldo do mes</div>
       <div class="summary-value ${saldo>=0?'pos':'neg'}">${moneyBR(saldo)}</div>
       <div class="summary-note">Competencia ${monthLabel(currentKey)}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Custo herdado</div>
+      <div class="summary-value neg">${moneyBR(currentOrigin.custo_herdado_mes)}</div>
+      <div class="summary-note">Parcelas de compras feitas em meses anteriores.</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Gasto novo no mes</div>
+      <div class="summary-value neg">${moneyBR(currentOrigin.gasto_novo_no_mes)}</div>
+      <div class="summary-note">Custos que nasceram e pesaram no proprio mes.</div>
+    </div>
+    <div class="summary-card wide">
+      <div class="summary-kicker">Gasto jogado para o futuro</div>
+      <div class="summary-value">${moneyBR(currentOrigin.gasto_jogado_para_futuro_no_mes)}</div>
+      <div class="summary-note">Compromissos criados neste mes para competencias futuras.</div>
     </div>
   `;
 
@@ -898,14 +936,26 @@ async function refreshDashboard(){
     const now=new Date();
     const from=new Date(now.getFullYear(),now.getMonth()-5,1);
     const fromKey=`${from.getFullYear()}-${String(from.getMonth()+1).padStart(2,'0')}-01`;
-    const { data, error } = await db
-      .from('lancamentos')
-      .select('mes_competencia,tipo,valor,categoria,necessidade')
-      .eq('user_id',S.user.id)
-      .gte('mes_competencia',fromKey)
-      .order('mes_competencia',{ascending:true});
-    if(error) throw error;
-    renderDashboard(aggregateDashboard(data || []));
+    const [baseRes,originRes] = await Promise.all([
+      db
+        .from('lancamentos')
+        .select('mes_competencia,tipo,valor,categoria,necessidade')
+        .eq('user_id',S.user.id)
+        .gte('mes_competencia',fromKey)
+        .order('mes_competencia',{ascending:true}),
+      db
+        .from('v_gastos_origem_competencia')
+        .select('mes_analisado,gasto_novo_no_mes,custo_herdado_mes,gasto_jogado_para_futuro_no_mes,parcelamentos_ativos_mes')
+        .eq('user_id',S.user.id)
+        .gte('mes_analisado',fromKey)
+        .order('mes_analisado',{ascending:true})
+    ]);
+    if(baseRes.error) throw baseRes.error;
+    if(originRes.error) throw originRes.error;
+    renderDashboard(
+      aggregateDashboard(baseRes.data || []),
+      aggregateOriginBreakdown(originRes.data || [])
+    );
   }catch(_ex){
     statusEl.textContent='Nao foi possivel carregar o dashboard.';
     statusEl.className='dashboard-status err';

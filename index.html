@@ -183,6 +183,11 @@ html,body{
   padding:calc(var(--safe-t) + 10px) 16px 10px;
   gap:10px;overflow:hidden;
 }
+.form-body.scrollable{
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding-bottom:calc(14px + var(--safe-b));
+}
+.form-body.scrollable::-webkit-scrollbar{display:none}
 
 .dashboard-scroll{
   flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
@@ -704,7 +709,7 @@ html,body{
 
   <!-- ── GASTOS ── -->
   <div id="tab-gastos" class="tab-pane active">
-    <div class="form-body">
+    <div class="form-body scrollable">
 
       <div class="owner-row">
         <div class="owner-toggle">
