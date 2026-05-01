@@ -510,6 +510,29 @@ html,body{
 .detail-key{font-size:13px;color:var(--text2);font-weight:500}
 .detail-val{font-size:14px;font-weight:700;color:var(--text);text-align:right;max-width:58%}
 .detail-close{margin-top:18px;width:100%;background:var(--field-bg);color:var(--text);border-radius:var(--r-pill);height:48px;font-size:15px;font-weight:600;border:none;cursor:pointer}
+.detail-actions{display:flex;gap:8px;margin-top:18px}
+.detail-btn{
+  flex:1;height:46px;border:none;border-radius:var(--r-pill);cursor:pointer;
+  font-size:14px;font-weight:700;
+}
+.detail-btn.edit{background:#F3E6DE;color:var(--terracota-dk)}
+.detail-btn.delete{background:#F8E3E0;color:#C0392B}
+
+.edit-overlay{
+  position:fixed;inset:0;background:rgba(42,42,42,.4);z-index:700;
+  display:flex;align-items:flex-end;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .2s;
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+}
+.edit-overlay.show{opacity:1;pointer-events:all}
+.edit-card{
+  background:var(--card);border-radius:20px 20px 0 0;width:100%;max-width:480px;
+  padding:20px 18px calc(20px + var(--safe-b));transform:translateY(16px);transition:transform .26s;
+  box-shadow:0 -4px 40px rgba(42,42,42,.12);display:flex;flex-direction:column;gap:12px;
+}
+.edit-overlay.show .edit-card{transform:translateY(0)}
+.edit-title{font-size:20px;font-weight:800;letter-spacing:-.4px;color:var(--text)}
+.edit-actions{display:flex;gap:8px;margin-top:6px}
 
 /* ══════════════════════════════════════════════════
    COMING SOON
@@ -907,7 +930,47 @@ html,body{
       <div class="detail-title" id="detail-title"></div>
     </div>
     <div id="detail-rows"></div>
+    <div class="detail-actions" id="detail-actions" style="display:none">
+      <button type="button" class="detail-btn edit" id="detail-edit">Editar</button>
+      <button type="button" class="detail-btn delete" id="detail-delete">Excluir</button>
+    </div>
     <button class="detail-close" id="detail-close">Fechar</button>
+  </div>
+</div>
+
+<div class="edit-overlay" id="edit-overlay">
+  <div class="edit-card">
+    <div class="edit-title">Editar gasto</div>
+    <div>
+      <label class="lbl">Valor</label>
+      <input type="number" step="0.01" min="0" class="inp" id="edit-gasto-valor">
+    </div>
+    <div>
+      <label class="lbl">Data e hora</label>
+      <input type="datetime-local" class="inp" id="edit-gasto-data">
+    </div>
+    <div>
+      <label class="lbl">Categoria</label>
+      <select class="sel" id="edit-gasto-categoria"></select>
+    </div>
+    <div>
+      <label class="lbl">Subcategoria</label>
+      <input type="text" class="inp" id="edit-gasto-subcategoria">
+    </div>
+    <div>
+      <label class="lbl">Necessidade</label>
+      <select class="sel" id="edit-gasto-necessidade">
+        <option value="">Nao informar</option>
+        <option value="1">Vital</option>
+        <option value="2">Basico</option>
+        <option value="3">Superfluo</option>
+        <option value="4">Bobagem</option>
+      </select>
+    </div>
+    <div class="edit-actions">
+      <button type="button" class="btn btn-ghost" id="edit-cancel">Cancelar</button>
+      <button type="button" class="btn btn-terra" id="edit-save">Salvar alteracoes</button>
+    </div>
   </div>
 </div>
 

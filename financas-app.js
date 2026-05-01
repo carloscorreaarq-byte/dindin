@@ -192,6 +192,13 @@ function dateInputToMiddayIso(value){
   return `${value}T12:00:00-03:00`;
 }
 
+function isoToDatetimeLocal(value){
+  if(!value) return '';
+  const d=new Date(value);
+  const local=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString();
+  return local.slice(0,16);
+}
+
 function buildParcelas(){
   const wrap=q('parcelas-row');
   [['A vista','a_vista'],['1x','1x'],['2x','2x'],['3x','3x'],['4x','4x'],
@@ -362,46 +369,87 @@ async function insertLancamento(lancamento){
   if(error) throw error;
 }
 
+async function getLinkedLancamentoIds(legacyId){
+  if(!S.user || !db) return [];
+  const ids=new Set();
+  const direct=await db.from('lancamentos').select('id').eq('user_id',S.user.id).eq('id',legacyId);
+  if(!direct.error && direct.data) direct.data.forEach(row=>ids.add(row.id));
+  const linked=await db.from('lancamentos').select('id').eq('user_id',S.user.id).ilike('observacoes',`%legado_id=${legacyId}%`);
+  if(!linked.error && linked.data) linked.data.forEach(row=>ids.add(row.id));
+  return [...ids];
+}
+
+async function syncLinkedLancamentosForGasto(gasto,legacyId){
+  const ids=await getLinkedLancamentoIds(legacyId);
+  const payload=buildLancamentoFromGasto(gasto,legacyId);
+  if(!ids.length){
+    await insertLancamento(payload);
+    return;
+  }
+  for(const id of ids){
+    const { error } = await db.from('lancamentos').update(payload).eq('user_id',S.user.id).eq('id',id);
+    if(error) throw error;
+  }
+}
+
+async function syncLinkedLancamentosForEntrada(entrada,legacyId){
+  const ids=await getLinkedLancamentoIds(legacyId);
+  const payload=buildLancamentoFromEntrada(entrada,legacyId);
+  if(!ids.length){
+    await insertLancamento(payload);
+    return;
+  }
+  for(const id of ids){
+    const { error } = await db.from('lancamentos').update(payload).eq('user_id',S.user.id).eq('id',id);
+    if(error) throw error;
+  }
+}
+
+async function deleteLinkedLancamentos(legacyId){
+  const ids=await getLinkedLancamentoIds(legacyId);
+  if(!ids.length) return;
+  const { error } = await db.from('lancamentos').delete().eq('user_id',S.user.id).in('id',ids);
+  if(error) throw error;
+}
+
 async function salvarGasto(){
   if(!S.gastoCents){toast('Digite o valor','err');return;}
   const isEu=S.owner==='eu',sub=isEu?getSubFinal():null,isCustom=isEu&&q('sel-sub').value==='__outros__';
   if(isEu&&!S.catId){toast('Selecione uma categoria','err');return;}
-  if(isCustom&&sub)await persistCustomSub(S.catId,sub);
-  const legacyId=crypto.randomUUID();
-  const gasto={
-    id:legacyId,
-    user_id:S.user?.id,
-    dono:S.owner,
-    valor:S.gastoCents/100,
-    tipo_pagamento:S.parcela,
-    forma_pagamento:q('sel-forma').value,
-    banco:q('sel-banco').value,
-    data:localDateTimeToIso(q('inp-data-gasto').value),
-    categoria:isEu?CATS.find(c=>c.id===S.catId)?.nome:null,
-    subcategoria:sub,
-    necessidade:isEu?S.necessidade:null
-  };
   const btn=q('btn-salvar-gasto');
   btn.disabled=true;
   btn.textContent='Salvando...';
   try{
+    let lancamentoWarning=false;
+    if(isCustom&&sub)await persistCustomSub(S.catId,sub);
+    const legacyId=crypto.randomUUID();
+    const gasto={
+      id:legacyId,
+      user_id:S.user?.id,
+      dono:S.owner,
+      valor:S.gastoCents/100,
+      tipo_pagamento:S.parcela,
+      forma_pagamento:q('sel-forma').value,
+      banco:q('sel-banco').value,
+      data:localDateTimeToIso(q('inp-data-gasto').value),
+      categoria:isEu?CATS.find(c=>c.id===S.catId)?.nome:null,
+      subcategoria:sub,
+      necessidade:isEu?S.necessidade:null
+    };
     if(S.user){
       const { error } = await db.from('gastos').insert(gasto);
       if(error) throw error;
-      try{
-        await insertLancamento(buildLancamentoFromGasto(gasto,legacyId));
-      }catch(_lancError){
-        toast('Gasto salvo, mas o resumo nao foi atualizado.','err');
-      }
-    }else enqueueOffline('gastos',gasto);
+      try{await syncLinkedLancamentosForGasto(gasto,legacyId);}
+      catch{lancamentoWarning=true;}
+    }else{
+      enqueueOffline('gastos',gasto);
+    }
     localStorage.setItem('gPresets',JSON.stringify({forma:q('sel-forma').value,banco:q('sel-banco').value}));
-    toast('Gasto salvo!','ok');
+    toast(lancamentoWarning?'Gasto salvo, mas o resumo nao foi atualizado.':'Gasto salvo!',lancamentoWarning?'err':'ok');
     resetGastos();
     refreshDashboardIfVisible();
   }catch(ex){
-    enqueueOffline('gastos',gasto);
-    toast('Salvo localmente','ok');
-    resetGastos();
+    toast(`Nao foi possivel salvar o gasto.${ex?.message?` ${ex.message}`:''}`,'err');
   }finally{
     btn.disabled=false;
     btn.textContent='Salvar Gasto';
@@ -436,37 +484,35 @@ function setupEntradas(){
 async function salvarEntrada(){
   if(!S.entradaCents){toast('Digite o valor','err');return;}
   const origem=q('sel-origem').value;
-  const legacyId=crypto.randomUUID();
-  const entrada={
-    id:legacyId,
-    user_id:S.user?.id,
-    valor:S.entradaCents/100,
-    origem,
-    origem_de:origem==='transferencia'?q('inp-origem-de').value.trim():null,
-    origem_motivo:origem==='transferencia'?q('inp-origem-motivo').value.trim():null,
-    origem_especificacao:origem==='outro'?q('inp-origem-spec').value.trim():null,
-    data:q('inp-data-entrada').value
-  };
   const btn=q('btn-salvar-entrada');
   btn.disabled=true;
   btn.textContent='Salvando...';
   try{
+    let lancamentoWarning=false;
+    const legacyId=crypto.randomUUID();
+    const entrada={
+      id:legacyId,
+      user_id:S.user?.id,
+      valor:S.entradaCents/100,
+      origem,
+      origem_de:origem==='transferencia'?q('inp-origem-de').value.trim():null,
+      origem_motivo:origem==='transferencia'?q('inp-origem-motivo').value.trim():null,
+      origem_especificacao:origem==='outro'?q('inp-origem-spec').value.trim():null,
+      data:q('inp-data-entrada').value
+    };
     if(S.user){
       const { error } = await db.from('entradas').insert(entrada);
       if(error) throw error;
-      try{
-        await insertLancamento(buildLancamentoFromEntrada(entrada,legacyId));
-      }catch(_lancError){
-        toast('Entrada salva, mas o resumo nao foi atualizado.','err');
-      }
-    }else enqueueOffline('entradas',entrada);
-    toast('Entrada salva!','ok');
+      try{await syncLinkedLancamentosForEntrada(entrada,legacyId);}
+      catch{lancamentoWarning=true;}
+    }else{
+      enqueueOffline('entradas',entrada);
+    }
+    toast(lancamentoWarning?'Entrada salva, mas o resumo nao foi atualizado.':'Entrada salva!',lancamentoWarning?'err':'ok');
     resetEntradas();
     refreshDashboardIfVisible();
   }catch(ex){
-    enqueueOffline('entradas',entrada);
-    toast('Salvo localmente','ok');
-    resetEntradas();
+    toast(`Nao foi possivel salvar a entrada.${ex?.message?` ${ex.message}`:''}`,'err');
   }finally{
     btn.disabled=false;
     btn.textContent='Salvar Entrada';
@@ -658,53 +704,64 @@ async function openList(tab){
   titleEl.textContent=tab==='gastos'?'Meus Gastos':'Minhas Entradas';
   q('list-overlay').classList.add('show');
   q('list-sheet').classList.add('show');
-  let items=[];
-  if(tab==='gastos'){
-    const{data}=await db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
-    items=data||[];
-  }else{
-    const{data}=await db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
-    items=data||[];
-  }
-  if(!items.length){
-    listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔍</div><p>Nenhum registro ainda</p></div>';
-    return;
-  }
-  const groups={};
-  items.forEach(item=>{
-    const d=item.data.slice(0,10);
-    if(!groups[d])groups[d]=[];
-    groups[d].push(item);
-  });
-  listEl.innerHTML='';
-  Object.entries(groups).forEach(([date,records])=>{
-    const dh=document.createElement('div');
-    dh.className='day-header';
-    dh.textContent=formatDay(date);
-    listEl.appendChild(dh);
-    records.forEach(rec=>{
-      const el=document.createElement('div');
-      el.className='list-item';
-      const isG=tab==='gastos';
-      const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
-      const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
-      const title=isG?(rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mae':'Gasto')):origemLabel(rec.origem);
-      const sub=isG?(rec.dono==='mae'?'Minha Mae':rec.categoria||''):(rec.origem_de||rec.origem_especificacao||'');
-      const val='R$ '+rec.valor.toLocaleString('pt-BR',{minimumFractionDigits:2});
-      el.innerHTML=`
-        <div class="list-item-icon ${isG?'terra':'sage'}">${icon}</div>
-        <div class="list-item-info">
-          <div class="list-item-title">${title}</div>
-          ${sub?`<div class="list-item-sub">${sub}</div>`:''}
-        </div>
-        <div class="list-item-val ${isG?'neg':'pos'}">${val}</div>`;
-      el.addEventListener('click',()=>openDetail(rec,tab));
-      listEl.appendChild(el);
+  try{
+    let items=[];
+    let error=null;
+    if(tab==='gastos'){
+      const res=await db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
+      items=res.data||[];
+      error=res.error;
+    }else{
+      const res=await db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
+      items=res.data||[];
+      error=res.error;
+    }
+    if(error) throw error;
+    if(!items.length){
+      listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔍</div><p>Nenhum registro ainda</p></div>';
+      return;
+    }
+    const groups={};
+    items.forEach(item=>{
+      const rawDate=(item.data || item.created_at || '').slice(0,10);
+      const d=rawDate || 'sem-data';
+      if(!groups[d])groups[d]=[];
+      groups[d].push(item);
     });
-  });
+    listEl.innerHTML='';
+    Object.entries(groups).forEach(([date,records])=>{
+      const dh=document.createElement('div');
+      dh.className='day-header';
+      dh.textContent=date==='sem-data'?'Sem data':formatDay(date);
+      listEl.appendChild(dh);
+      records.forEach(rec=>{
+        const el=document.createElement('div');
+        el.className='list-item';
+        const isG=tab==='gastos';
+        const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
+        const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
+        const title=isG?(rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mae':'Gasto')):origemLabel(rec.origem);
+        const sub=isG?(rec.dono==='mae'?'Minha Mae':rec.categoria||''):(rec.origem_de||rec.origem_especificacao||'');
+        const val='R$ '+Number(rec.valor).toLocaleString('pt-BR',{minimumFractionDigits:2});
+        el.innerHTML=`
+          <div class="list-item-icon ${isG?'terra':'sage'}">${icon}</div>
+          <div class="list-item-info">
+            <div class="list-item-title">${title}</div>
+            ${sub?`<div class="list-item-sub">${sub}</div>`:''}
+          </div>
+          <div class="list-item-val ${isG?'neg':'pos'}">${val}</div>`;
+        el.addEventListener('click',()=>openDetail(rec,tab));
+        listEl.appendChild(el);
+      });
+    });
+  }catch(ex){
+    listEl.innerHTML=`<div class="empty-state"><div class="empty-state-icon">!</div><p>Erro ao carregar registros.</p><p style="font-size:12px">${ex?.message||''}</p></div>`;
+  }
 }
 
 function openDetail(rec,tab){
+  S.detailRecord=rec;
+  S.detailTab=tab;
   const isG=tab==='gastos';
   const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
   const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
@@ -727,14 +784,102 @@ function openDetail(rec,tab){
   }
   rows.push(['Data',formatDateTime(rec.data)]);
   q('detail-rows').innerHTML=rows.map(([k,v])=>`<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`).join('');
+  q('detail-actions').style.display=(tab==='gastos'||tab==='entradas')?'flex':'none';
+  q('detail-edit').style.display=tab==='gastos'?'':'none';
+  q('detail-delete').textContent=tab==='gastos'?'Excluir gasto':'Excluir entrada';
   q('detail-overlay').classList.add('show');
+}
+
+function buildEditCategoryOptions(selected){
+  q('edit-gasto-categoria').innerHTML=[
+    '<option value="">Selecionar...</option>',
+    ...CATS.map(cat=>`<option value="${cat.nome}" ${cat.nome===selected?'selected':''}>${cat.nome}</option>`)
+  ].join('');
+}
+
+function openEditGasto(){
+  const rec=S.detailRecord;
+  if(!rec || S.detailTab!=='gastos') return;
+  buildEditCategoryOptions(rec.categoria || '');
+  q('edit-gasto-valor').value=Number(rec.valor).toFixed(2);
+  q('edit-gasto-data').value=isoToDatetimeLocal(rec.data);
+  q('edit-gasto-subcategoria').value=rec.subcategoria || '';
+  q('edit-gasto-necessidade').value=rec.necessidade || '';
+  q('edit-overlay').classList.add('show');
+}
+
+function closeEditGasto(){
+  q('edit-overlay').classList.remove('show');
+}
+
+async function saveEditedGasto(){
+  const rec=S.detailRecord;
+  if(!rec || S.detailTab!=='gastos') return;
+  const btn=q('edit-save');
+  btn.disabled=true;
+  btn.textContent='Salvando...';
+  const updated={
+    valor:Number(q('edit-gasto-valor').value || 0),
+    data:localDateTimeToIso(q('edit-gasto-data').value),
+    categoria:q('edit-gasto-categoria').value || null,
+    subcategoria:q('edit-gasto-subcategoria').value.trim() || null,
+    necessidade:q('edit-gasto-necessidade').value ? Number(q('edit-gasto-necessidade').value) : null,
+  };
+  try{
+    const { error } = await db.from('gastos').update(updated).eq('user_id',S.user.id).eq('id',rec.id);
+    if(error) throw error;
+    const merged={...rec,...updated};
+    await syncLinkedLancamentosForGasto(merged,rec.id);
+    S.detailRecord=merged;
+    closeEditGasto();
+    q('detail-overlay').classList.remove('show');
+    toast('Gasto atualizado!','ok');
+    refreshDashboardIfVisible();
+  }catch(ex){
+    toast(`Nao foi possivel atualizar o gasto.${ex?.message?` ${ex.message}`:''}`,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Salvar alteracoes';
+  }
+}
+
+async function deleteCurrentRecord(){
+  const rec=S.detailRecord;
+  const tab=S.detailTab;
+  if(!rec || !tab) return;
+  const label=tab==='gastos'?'gasto':'entrada';
+  if(!confirm(`Deseja excluir este ${label}?`)) return;
+  try{
+    if(tab==='gastos'){
+      const { error } = await db.from('gastos').delete().eq('user_id',S.user.id).eq('id',rec.id);
+      if(error) throw error;
+      await deleteLinkedLancamentos(rec.id);
+    }else{
+      const { error } = await db.from('entradas').delete().eq('user_id',S.user.id).eq('id',rec.id);
+      if(error) throw error;
+      await deleteLinkedLancamentos(rec.id);
+    }
+    q('detail-overlay').classList.remove('show');
+    closeList();
+    toast(`${tab==='gastos'?'Gasto':'Entrada'} excluido!`,'ok');
+    refreshDashboardIfVisible();
+  }catch(ex){
+    toast(`Nao foi possivel excluir o registro.${ex?.message?` ${ex.message}`:''}`,'err');
+  }
 }
 
 q('sheet-close').addEventListener('click',closeList);
 q('list-overlay').addEventListener('click',closeList);
 q('detail-close').addEventListener('click',()=>q('detail-overlay').classList.remove('show'));
+q('detail-edit').addEventListener('click',openEditGasto);
+q('detail-delete').addEventListener('click',deleteCurrentRecord);
 q('detail-overlay').addEventListener('click',e=>{
   if(e.target===q('detail-overlay'))q('detail-overlay').classList.remove('show');
+});
+q('edit-cancel').addEventListener('click',closeEditGasto);
+q('edit-save').addEventListener('click',saveEditedGasto);
+q('edit-overlay').addEventListener('click',e=>{
+  if(e.target===q('edit-overlay')) closeEditGasto();
 });
 
 function closeList(){
