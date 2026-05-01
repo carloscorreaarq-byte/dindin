@@ -2,7 +2,7 @@
   "name": "Finanças Pessoais",
   "short_name": "Finanças",
   "description": "Controle financeiro pessoal",
-  "start_url": "/financas.html",
+  "start_url": "./financas.html"
   "display": "standalone",
   "background_color": "#F2F2F7",
   "theme_color": "#6366F1",
