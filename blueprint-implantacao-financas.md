@@ -599,6 +599,7 @@ Registro de execucao:
 - `2026-05-01`: corrigido o scroll da aba `Parcelas` no celular e conectado o dashboard geral a `v_gastos_origem_competencia`, passando a exibir custo herdado, gasto novo no mes e gasto jogado para o futuro; o cache do app foi atualizado para `financas-v9`
 - `2026-05-01`: corrigido o layout do app instalado no celular, ancorando telas, overlays e navegacao inferior ao frame da aplicacao e compactando a barra inferior no modo standalone; o cache do app foi atualizado para `financas-v10`
 - `2026-05-01`: revertido o posicionamento estrutural de telas e menu inferior para `fixed`, restaurando a barra de navegacao parada no Safari e no app instalado, com padding extra nas areas rolaveis para nao esconder campos atras do menu; o cache do app foi atualizado para `financas-v11`
+- `2026-05-01`: a aba `Parcelas` passou a reutilizar exatamente o container rolavel de `Resumo` (`dashboard-scroll`) e teve removido o bloco explicativo inutil, alinhando seu comportamento de scroll ao painel que ja funcionava; o cache do app foi atualizado para `financas-v12`
 
 ### Fase 0 - Saneamento da base atual
 
