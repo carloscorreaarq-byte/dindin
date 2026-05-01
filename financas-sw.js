@@ -1,9 +1,12 @@
 ﻿// Service Worker — Finanças Pessoais
-const CACHE = 'financas-v2';
+const CACHE = 'financas-v3';
 const APP_SHELL = [
-  './financas.html',
+  './index.html',
   './financas-manifest.json',
   './financas-sw.js',
+  './financas-core.js',
+  './financas-app.js',
+  './financas-init.js',
 ];
 
 self.addEventListener('install', e => {

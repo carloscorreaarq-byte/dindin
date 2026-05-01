@@ -177,6 +177,84 @@ html,body{
   gap:10px;overflow:hidden;
 }
 
+.dashboard-scroll{
+  flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:calc(var(--safe-t) + 10px) 16px 14px;
+  display:flex;flex-direction:column;gap:12px;
+}
+.dashboard-scroll::-webkit-scrollbar{display:none}
+.dashboard-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:10px;
+}
+.dashboard-title{font-size:24px;font-weight:800;letter-spacing:-.5px;color:var(--text)}
+.dashboard-sub{font-size:13px;color:var(--text2);margin-top:4px}
+.dashboard-actions{display:flex;align-items:center;gap:8px}
+.dashboard-chip{
+  border:none;border-radius:999px;background:var(--field-bg);color:var(--text2);
+  padding:8px 12px;font-size:12px;font-weight:700;white-space:nowrap;
+}
+.dashboard-status{
+  min-height:18px;font-size:12px;color:var(--text2);
+}
+.dashboard-status.err{color:#C0392B}
+.dashboard-status.ok{color:var(--sage-dk)}
+.summary-grid{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:10px;
+}
+.summary-card{
+  background:var(--card);border-radius:var(--r-card);padding:14px 14px 13px;
+  box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:6px;
+}
+.summary-card.wide{grid-column:1 / -1}
+.summary-kicker{
+  font-size:10px;font-weight:700;color:var(--text2);
+  text-transform:uppercase;letter-spacing:.08em;
+}
+.summary-value{
+  font-size:27px;font-weight:800;letter-spacing:-.8px;color:var(--text);
+}
+.summary-value.pos{color:var(--sage-dk)}
+.summary-value.neg{color:var(--terracota-dk)}
+.summary-note{font-size:12px;color:var(--text2);line-height:1.35}
+.dash-card{
+  background:var(--card);border-radius:var(--r-card);padding:14px;
+  box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:12px;
+}
+.dash-card-head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.dash-card-title{
+  font-size:16px;font-weight:800;letter-spacing:-.2px;color:var(--text);
+}
+.dash-card-sub{font-size:12px;color:var(--text2)}
+.bar-list{display:flex;flex-direction:column;gap:10px}
+.bar-row{display:flex;flex-direction:column;gap:6px}
+.bar-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.bar-label{font-size:13px;font-weight:600;color:var(--text)}
+.bar-value{font-size:12px;font-weight:700;color:var(--text2);white-space:nowrap}
+.bar-track{
+  height:8px;border-radius:999px;background:var(--field-bg);overflow:hidden;
+}
+.bar-fill{
+  height:100%;border-radius:999px;
+  background:linear-gradient(90deg,var(--terracota),var(--mostarda));
+}
+.bar-fill.sage{background:linear-gradient(90deg,var(--sage),var(--sage-dk))}
+.month-list{display:flex;flex-direction:column;gap:8px}
+.month-row{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:10px 0;border-bottom:1px solid var(--border);
+}
+.month-row:last-child{border-bottom:none;padding-bottom:0}
+.month-name{font-size:13px;font-weight:700;color:var(--text)}
+.month-balance{font-size:13px;font-weight:800}
+.month-balance.pos{color:var(--sage-dk)}
+.month-balance.neg{color:var(--terracota-dk)}
+.dash-empty{
+  padding:18px 12px;border-radius:14px;background:var(--field-bg);
+  font-size:13px;line-height:1.45;color:var(--text2);text-align:center;
+}
+
 /* ══════════════════════════════════════════════════
    OWNER TOGGLE
 ══════════════════════════════════════════════════ */
@@ -542,6 +620,49 @@ html,body{
 <!-- ══════════ APP ══════════ -->
 <div id="screen-app" class="screen hidden">
 
+  <!-- ── DASHBOARD ── -->
+  <div id="tab-dashboard" class="tab-pane">
+    <div class="dashboard-scroll">
+      <div class="dashboard-head">
+        <div>
+          <div class="dashboard-title">Resumo</div>
+          <div class="dashboard-sub" id="dashboard-subtitle">Visão geral dos últimos 6 meses</div>
+        </div>
+        <div class="dashboard-actions">
+          <button type="button" id="btn-dashboard-refresh" class="dashboard-chip">Atualizar</button>
+        </div>
+      </div>
+
+      <div class="dashboard-status" id="dashboard-status"></div>
+
+      <div class="summary-grid" id="dashboard-metrics"></div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-card-title">Evolução mensal</div>
+          <div class="dash-card-sub">Saldo por competência</div>
+        </div>
+        <div class="month-list" id="dashboard-months"></div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-card-title">Gastos por categoria</div>
+          <div class="dash-card-sub">Mês atual</div>
+        </div>
+        <div class="bar-list" id="dashboard-categories"></div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-card-title">Gastos por necessidade</div>
+          <div class="dash-card-sub">Mês atual</div>
+        </div>
+        <div class="bar-list" id="dashboard-needs"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── GASTOS ── -->
   <div id="tab-gastos" class="tab-pane active">
     <div class="form-body">
@@ -723,6 +844,14 @@ html,body{
 
   <!-- ── NAV ── -->
   <nav class="bottom-nav">
+    <button class="nav-btn" data-tab="dashboard" id="nav-dashboard">
+      <div class="nav-ico-wrap">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-7"/>
+        </svg>
+      </div>
+      <span class="nav-lbl">Resumo</span>
+    </button>
     <button class="nav-btn active" data-tab="gastos" id="nav-gastos">
       <div class="nav-ico-wrap">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

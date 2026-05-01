@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupGastos();
   setupEntradas();
   setupConfig();
+  setupDashboard();
   setupNav();
   setDates();
   loadConfigForm();

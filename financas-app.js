@@ -15,7 +15,7 @@ function loadConfigForm(){
   if(!cfg) return;
   q('inp-supabase-url').value=cfg.url||'';
   q('inp-supabase-key').value=cfg.anonKey||'';
-  setConfigStatus('Configuração carregada deste dispositivo.','ok');
+  setConfigStatus('Configuracao carregada deste dispositivo.','ok');
 }
 
 function saveConfig(cfg){localStorage.setItem(SUPABASE_CONFIG_KEY,JSON.stringify(cfg));}
@@ -39,6 +39,7 @@ function bindAuthListener(){
       S.user=session.user;
       showApp();
       await loadCustomSubs();
+      refreshDashboardIfVisible();
     }else showAuth();
   });
   authListenerBound=true;
@@ -48,7 +49,7 @@ async function bootSupabase(){
   const cfg=getSavedConfig();
   if(!isValidConfig(cfg)){
     showAuth();
-    setConfigStatus('Preencha e salve a configuração do Supabase para entrar.','err');
+    setConfigStatus('Preencha e salve a configuracao do Supabase para entrar.','err');
     return;
   }
   try{
@@ -60,12 +61,13 @@ async function bootSupabase(){
       S.user=session.user;
       showApp();
       await loadCustomSubs();
+      refreshDashboardIfVisible();
     }else showAuth();
-    setConfigStatus('Configuração salva neste dispositivo.','ok');
+    setConfigStatus('Configuracao salva neste dispositivo.','ok');
   }catch(_ex){
     db=null;
     showAuth();
-    setConfigStatus('Não foi possível iniciar o Supabase com essa configuração.','err');
+    setConfigStatus('Nao foi possivel iniciar o Supabase com essa configuracao.','err');
   }
 }
 
@@ -73,13 +75,17 @@ function setupConfig(){
   q('btn-save-config').addEventListener('click',async ()=>{
     const cfg=readConfigForm();
     if(!isValidConfig(cfg)){
-      setConfigStatus('Informe uma URL válida e a chave anon do Supabase.','err');
+      setConfigStatus('Informe uma URL valida e a chave anon do Supabase.','err');
       return;
     }
     saveConfig(cfg);
-    setConfigStatus('Configuração salva. Inicializando...','ok');
+    setConfigStatus('Configuracao salva. Inicializando...','ok');
     await bootSupabase();
   });
+}
+
+function setupDashboard(){
+  q('btn-dashboard-refresh').addEventListener('click',()=>refreshDashboard());
 }
 
 q('form-auth').addEventListener('submit',async e=>{
@@ -88,7 +94,7 @@ q('form-auth').addEventListener('submit',async e=>{
   const btn=q('btn-auth'),err=q('auth-err');
   if(!db){
     err.style.color='#C0392B';
-    err.textContent='Salve a configuração do Supabase antes de entrar.';
+    err.textContent='Salve a configuracao do Supabase antes de entrar.';
     return;
   }
   btn.disabled=true;btn.textContent='...';err.textContent='';
@@ -104,13 +110,16 @@ q('form-auth').addEventListener('submit',async e=>{
     }
   }catch(ex){
     err.style.color='#C0392B';err.textContent=traduzErro(ex.message);
-  }finally{btn.disabled=false;btn.textContent=authMode==='login'?'Entrar':'Criar conta';}
+  }finally{
+    btn.disabled=false;
+    btn.textContent=authMode==='login'?'Entrar':'Criar conta';
+  }
 });
 
 q('btn-toggle-mode').addEventListener('click',()=>{
   authMode=authMode==='login'?'register':'login';
   q('btn-auth').textContent=authMode==='login'?'Entrar':'Criar conta';
-  q('btn-toggle-mode').textContent=authMode==='login'?'Criar conta':'Já tenho conta';
+  q('btn-toggle-mode').textContent=authMode==='login'?'Criar conta':'Ja tenho conta';
   q('auth-err').textContent='';
 });
 
@@ -123,8 +132,8 @@ function showApp(){q('screen-auth').classList.add('hidden');q('screen-app').clas
 
 function traduzErro(m){
   if(m.includes('Invalid login'))return'E-mail ou senha incorretos';
-  if(m.includes('already registered'))return'E-mail já cadastrado';
-  if(m.includes('Password should'))return'Senha muito curta (mín. 6 caracteres)';
+  if(m.includes('already registered'))return'E-mail ja cadastrado';
+  if(m.includes('Password should'))return'Senha muito curta (min. 6 caracteres)';
   return m;
 }
 
@@ -140,11 +149,14 @@ function setupNav(){
     btn.addEventListener('click',()=>{
       if(btn.classList.contains('active')){
         if(tabSupportsList(btn.dataset.tab)) openList(btn.dataset.tab);
+        else if(btn.dataset.tab==='dashboard') refreshDashboard();
         return;
       }
       document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
       document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
-      btn.classList.add('active');q(`tab-${btn.dataset.tab}`).classList.add('active');
+      btn.classList.add('active');
+      q(`tab-${btn.dataset.tab}`).classList.add('active');
+      if(btn.dataset.tab==='dashboard') refreshDashboard();
     });
   });
 }
@@ -168,16 +180,32 @@ function bindValor(inpId,numId,cb){
 
 function fmt(c){return Math.floor(c/100).toLocaleString('pt-BR')+','+String(c%100).padStart(2,'0');}
 
+function moneyBR(value){
+  return value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+
+function localDateTimeToIso(value){
+  return new Date(value).toISOString();
+}
+
+function dateInputToMiddayIso(value){
+  return `${value}T12:00:00-03:00`;
+}
+
 function buildParcelas(){
   const wrap=q('parcelas-row');
-  [['À vista','a_vista'],['1x','1x'],['2x','2x'],['3x','3x'],['4x','4x'],
+  [['A vista','a_vista'],['1x','1x'],['2x','2x'],['3x','3x'],['4x','4x'],
    ['5x','5x'],['6x','6x'],['7x','7x'],['8x','8x'],['9x','9x'],
    ['10x','10x'],['11x','11x'],['12x','12x']].forEach(([l,v],i)=>{
     const b=document.createElement('button');
-    b.type='button';b.className='p-btn'+(i===0?' active':'');b.dataset.v=v;b.textContent=l;
+    b.type='button';
+    b.className='p-btn'+(i===0?' active':'');
+    b.dataset.v=v;
+    b.textContent=l;
     b.addEventListener('click',()=>{
       document.querySelectorAll('.p-btn').forEach(x=>x.classList.remove('active'));
-      b.classList.add('active');S.parcela=v;
+      b.classList.add('active');
+      S.parcela=v;
     });
     wrap.appendChild(b);
   });
@@ -187,7 +215,8 @@ function setupGastos(){
   document.querySelectorAll('.owner-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       document.querySelectorAll('.owner-btn').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');S.owner=btn.dataset.owner;
+      btn.classList.add('active');
+      S.owner=btn.dataset.owner;
       q('meus-campos').style.display=S.owner==='mae'?'none':'flex';
       q('opt-transf').style.display=S.owner==='mae'?'':'none';
       if(S.owner==='eu'&&q('sel-forma').value==='transferencia')q('sel-forma').value='credito';
@@ -196,7 +225,8 @@ function setupGastos(){
   document.querySelectorAll('.nec-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       document.querySelectorAll('.nec-btn').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');S.necessidade=+btn.dataset.v;
+      btn.classList.add('active');
+      S.necessidade=+btn.dataset.v;
     });
   });
   q('sel-cat').addEventListener('change',onCatChange);
@@ -209,18 +239,43 @@ function setupGastos(){
 
 function buildCats(){
   const sel=q('sel-cat');
-  CATS.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.nome;sel.appendChild(o);});
+  CATS.forEach(c=>{
+    const o=document.createElement('option');
+    o.value=c.id;
+    o.textContent=c.nome;
+    sel.appendChild(o);
+  });
 }
 
 function onCatChange(){
   S.catId=q('sel-cat').value||null;
-  if(!S.catId){q('sub-wrap').style.display='none';q('custom-sub-wrap').style.display='none';return;}
+  if(!S.catId){
+    q('sub-wrap').style.display='none';
+    q('custom-sub-wrap').style.display='none';
+    return;
+  }
   const cat=CATS.find(c=>c.id===S.catId),sel=q('sel-sub');
   sel.innerHTML='<option value="">Selecionar...</option>';
-  cat.subs.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;sel.appendChild(o);});
-  (S.customSubs[S.catId]||[]).forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s+' ✦';sel.appendChild(o);});
-  if(cat.outros){const o=document.createElement('option');o.value='__outros__';o.textContent='Outros...';sel.appendChild(o);}
-  q('sub-wrap').style.display='';q('custom-sub-wrap').style.display='none';
+  cat.subs.forEach(s=>{
+    const o=document.createElement('option');
+    o.value=s;
+    o.textContent=s;
+    sel.appendChild(o);
+  });
+  (S.customSubs[S.catId]||[]).forEach(s=>{
+    const o=document.createElement('option');
+    o.value=s;
+    o.textContent=`${s} ✦`;
+    sel.appendChild(o);
+  });
+  if(cat.outros){
+    const o=document.createElement('option');
+    o.value='__outros__';
+    o.textContent='Outros...';
+    sel.appendChild(o);
+  }
+  q('sub-wrap').style.display='';
+  q('custom-sub-wrap').style.display='none';
 }
 
 function onSubChange(){
@@ -229,23 +284,82 @@ function onSubChange(){
   if(isO)setTimeout(()=>q('inp-custom-sub').focus(),50);
 }
 
-function getSubFinal(){const v=q('sel-sub').value;return v==='__outros__'?q('inp-custom-sub').value.trim():v;}
+function getSubFinal(){
+  const v=q('sel-sub').value;
+  return v==='__outros__'?q('inp-custom-sub').value.trim():v;
+}
 
 async function persistCustomSub(catId,nome){
   if(!nome||(S.customSubs[catId]||[]).includes(nome))return;
   if(!S.customSubs[catId])S.customSubs[catId]=[];
   S.customSubs[catId].push(nome);
   localStorage.setItem('customSubs',JSON.stringify(S.customSubs));
-  if(S.user)await db.from('subcategorias_custom').upsert({user_id:S.user.id,categoria:catId,nome},{onConflict:'user_id,categoria,nome'});
+  if(S.user){
+    await db.from('subcategorias_custom').upsert(
+      {user_id:S.user.id,categoria:catId,nome},
+      {onConflict:'user_id,categoria,nome'}
+    );
+  }
 }
 
 async function loadCustomSubs(){
   if(!S.user)return;
   const{data}=await db.from('subcategorias_custom').select('categoria,nome').eq('user_id',S.user.id);
   if(data){
-    data.forEach(r=>{if(!S.customSubs[r.categoria])S.customSubs[r.categoria]=[];if(!S.customSubs[r.categoria].includes(r.nome))S.customSubs[r.categoria].push(r.nome);});
+    data.forEach(r=>{
+      if(!S.customSubs[r.categoria])S.customSubs[r.categoria]=[];
+      if(!S.customSubs[r.categoria].includes(r.nome))S.customSubs[r.categoria].push(r.nome);
+    });
     localStorage.setItem('customSubs',JSON.stringify(S.customSubs));
   }
+}
+
+function buildLancamentoFromGasto(gasto,legacyId){
+  return {
+    user_id:gasto.user_id,
+    tipo:'saida',
+    proprietario_economico:gasto.dono==='mae'?'mae':'eu',
+    contexto:gasto.dono==='mae'?'mae':(gasto.categoria==='Moradia'?'casa_atual':'pessoal'),
+    descricao:gasto.subcategoria || gasto.categoria || (gasto.dono==='mae'?'Gasto Mae':'Gasto'),
+    categoria:gasto.categoria,
+    subcategoria:gasto.subcategoria,
+    necessidade:gasto.necessidade,
+    valor:gasto.valor,
+    data_evento:gasto.data,
+    forma_pagamento:gasto.forma_pagamento,
+    banco_referencia:gasto.banco,
+    observacoes:`Origem app: gastos; legado_id=${legacyId}; tipo_pagamento=${gasto.tipo_pagamento}`,
+  };
+}
+
+function buildLancamentoFromEntrada(entrada,legacyId){
+  return {
+    user_id:entrada.user_id,
+    tipo:'entrada',
+    proprietario_economico:'eu',
+    contexto:entrada.origem==='aluguel'?'casa_atual':'pessoal',
+    descricao:
+      entrada.origem==='transferencia'
+        ? (entrada.origem_motivo || entrada.origem_de || 'Transferencia')
+        : (entrada.origem==='outro' ? (entrada.origem_especificacao || 'Outro') : origemLabel(entrada.origem)),
+    categoria:'Entradas',
+    subcategoria:entrada.origem,
+    valor:entrada.valor,
+    data_evento:dateInputToMiddayIso(entrada.data),
+    observacoes:[
+      'Origem app: entradas',
+      `legado_id=${legacyId}`,
+      entrada.origem_de?`origem_de=${entrada.origem_de}`:'',
+      entrada.origem_motivo?`origem_motivo=${entrada.origem_motivo}`:'',
+      entrada.origem_especificacao?`origem_especificacao=${entrada.origem_especificacao}`:''
+    ].filter(Boolean).join('; '),
+  };
+}
+
+async function insertLancamento(lancamento){
+  if(!S.user || !db) return;
+  const { error } = await db.from('lancamentos').insert(lancamento);
+  if(error) throw error;
 }
 
 async function salvarGasto(){
@@ -253,26 +367,60 @@ async function salvarGasto(){
   const isEu=S.owner==='eu',sub=isEu?getSubFinal():null,isCustom=isEu&&q('sel-sub').value==='__outros__';
   if(isEu&&!S.catId){toast('Selecione uma categoria','err');return;}
   if(isCustom&&sub)await persistCustomSub(S.catId,sub);
-  const gasto={user_id:S.user?.id,dono:S.owner,valor:S.gastoCents/100,tipo_pagamento:S.parcela,
-    forma_pagamento:q('sel-forma').value,banco:q('sel-banco').value,data:q('inp-data-gasto').value,
-    categoria:isEu?CATS.find(c=>c.id===S.catId)?.nome:null,subcategoria:sub,necessidade:isEu?S.necessidade:null};
-  const btn=q('btn-salvar-gasto');btn.disabled=true;btn.textContent='Salvando...';
+  const legacyId=crypto.randomUUID();
+  const gasto={
+    id:legacyId,
+    user_id:S.user?.id,
+    dono:S.owner,
+    valor:S.gastoCents/100,
+    tipo_pagamento:S.parcela,
+    forma_pagamento:q('sel-forma').value,
+    banco:q('sel-banco').value,
+    data:localDateTimeToIso(q('inp-data-gasto').value),
+    categoria:isEu?CATS.find(c=>c.id===S.catId)?.nome:null,
+    subcategoria:sub,
+    necessidade:isEu?S.necessidade:null
+  };
+  const btn=q('btn-salvar-gasto');
+  btn.disabled=true;
+  btn.textContent='Salvando...';
   try{
-    if(S.user){const{error}=await db.from('gastos').insert(gasto);if(error)throw error;}
-    else enqueueOffline('gastos',gasto);
+    if(S.user){
+      const { error } = await db.from('gastos').insert(gasto);
+      if(error) throw error;
+      try{
+        await insertLancamento(buildLancamentoFromGasto(gasto,legacyId));
+      }catch(_lancError){
+        toast('Gasto salvo, mas o resumo nao foi atualizado.','err');
+      }
+    }else enqueueOffline('gastos',gasto);
     localStorage.setItem('gPresets',JSON.stringify({forma:q('sel-forma').value,banco:q('sel-banco').value}));
-    toast('Gasto salvo! ✓','ok');resetGastos();
-  }catch(ex){enqueueOffline('gastos',gasto);toast('Salvo localmente','ok');resetGastos();}
-  finally{btn.disabled=false;btn.textContent='Salvar Gasto';}
+    toast('Gasto salvo!','ok');
+    resetGastos();
+    refreshDashboardIfVisible();
+  }catch(ex){
+    enqueueOffline('gastos',gasto);
+    toast('Salvo localmente','ok');
+    resetGastos();
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Salvar Gasto';
+  }
 }
 
 function resetGastos(){
-  S.gastoCents=0;S.necessidade=null;S.catId=null;S.parcela='a_vista';
-  q('val-gasto-inp').value='';q('val-gasto-num').textContent='0,00';
+  S.gastoCents=0;
+  S.necessidade=null;
+  S.catId=null;
+  S.parcela='a_vista';
+  q('val-gasto-inp').value='';
+  q('val-gasto-num').textContent='0,00';
   document.querySelectorAll('.p-btn').forEach(b=>b.classList.remove('active'));
   document.querySelector('.p-btn[data-v="a_vista"]').classList.add('active');
   document.querySelectorAll('.nec-btn').forEach(b=>b.classList.remove('active'));
-  q('sel-cat').value='';q('sub-wrap').style.display='none';q('custom-sub-wrap').style.display='none';
+  q('sel-cat').value='';
+  q('sub-wrap').style.display='none';
+  q('custom-sub-wrap').style.display='none';
   setDates();
 }
 
@@ -288,26 +436,219 @@ function setupEntradas(){
 async function salvarEntrada(){
   if(!S.entradaCents){toast('Digite o valor','err');return;}
   const origem=q('sel-origem').value;
-  const entrada={user_id:S.user?.id,valor:S.entradaCents/100,origem,
+  const legacyId=crypto.randomUUID();
+  const entrada={
+    id:legacyId,
+    user_id:S.user?.id,
+    valor:S.entradaCents/100,
+    origem,
     origem_de:origem==='transferencia'?q('inp-origem-de').value.trim():null,
     origem_motivo:origem==='transferencia'?q('inp-origem-motivo').value.trim():null,
     origem_especificacao:origem==='outro'?q('inp-origem-spec').value.trim():null,
-    data:q('inp-data-entrada').value};
-  const btn=q('btn-salvar-entrada');btn.disabled=true;btn.textContent='Salvando...';
+    data:q('inp-data-entrada').value
+  };
+  const btn=q('btn-salvar-entrada');
+  btn.disabled=true;
+  btn.textContent='Salvando...';
   try{
-    if(S.user){const{error}=await db.from('entradas').insert(entrada);if(error)throw error;}
-    else enqueueOffline('entradas',entrada);
-    toast('Entrada salva! ✓','ok');resetEntradas();
-  }catch(ex){enqueueOffline('entradas',entrada);toast('Salvo localmente','ok');resetEntradas();}
-  finally{btn.disabled=false;btn.textContent='Salvar Entrada';}
+    if(S.user){
+      const { error } = await db.from('entradas').insert(entrada);
+      if(error) throw error;
+      try{
+        await insertLancamento(buildLancamentoFromEntrada(entrada,legacyId));
+      }catch(_lancError){
+        toast('Entrada salva, mas o resumo nao foi atualizado.','err');
+      }
+    }else enqueueOffline('entradas',entrada);
+    toast('Entrada salva!','ok');
+    resetEntradas();
+    refreshDashboardIfVisible();
+  }catch(ex){
+    enqueueOffline('entradas',entrada);
+    toast('Salvo localmente','ok');
+    resetEntradas();
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Salvar Entrada';
+  }
 }
 
 function resetEntradas(){
-  S.entradaCents=0;q('val-entrada-inp').value='';q('val-entrada-num').textContent='0,00';
+  S.entradaCents=0;
+  q('val-entrada-inp').value='';
+  q('val-entrada-num').textContent='0,00';
   q('sel-origem').value='pro_labore';
-  q('transf-fields').style.display='none';q('outro-field').style.display='none';
-  q('inp-origem-de').value='';q('inp-origem-motivo').value='';q('inp-origem-spec').value='';
+  q('transf-fields').style.display='none';
+  q('outro-field').style.display='none';
+  q('inp-origem-de').value='';
+  q('inp-origem-motivo').value='';
+  q('inp-origem-spec').value='';
   setDates();
+}
+
+function monthLabel(key){
+  return new Date(`${key}T12:00:00`).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+}
+
+function percentChange(current,previous){
+  if(!previous && !current) return 'sem variacao';
+  if(!previous) return '+100%';
+  const delta=((current-previous)/previous)*100;
+  const signal=delta>0?'+':'';
+  return `${signal}${delta.toFixed(1).replace('.',',')}%`;
+}
+
+function aggregateDashboard(rows){
+  const months={};
+  rows.forEach(row=>{
+    const key=row.mes_competencia;
+    if(!months[key]) months[key]={entradas:0,saidas:0,categorias:{},necessidades:{}};
+    const bucket=months[key];
+    const value=Number(row.valor)||0;
+    if(row.tipo==='entrada') bucket.entradas+=value;
+    if(row.tipo==='saida'){
+      bucket.saidas+=value;
+      const cat=row.categoria || 'Sem categoria';
+      bucket.categorias[cat]=(bucket.categorias[cat]||0)+value;
+      if(row.necessidade) bucket.necessidades[row.necessidade]=(bucket.necessidades[row.necessidade]||0)+value;
+    }
+  });
+  return months;
+}
+
+function renderBarList(containerId,items,tone=''){
+  const el=q(containerId);
+  if(!items.length){
+    el.innerHTML='<div class="dash-empty">Sem dados suficientes neste periodo.</div>';
+    return;
+  }
+  const max=Math.max(...items.map(item=>item.value),1);
+  el.innerHTML=items.map(item=>`
+    <div class="bar-row">
+      <div class="bar-meta">
+        <div class="bar-label">${item.label}</div>
+        <div class="bar-value">${moneyBR(item.value)}${item.share!=null?` • ${item.share}%`:''}</div>
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill ${tone}" style="width:${Math.max((item.value/max)*100,4)}%"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderDashboard(data){
+  const metricsEl=q('dashboard-metrics');
+  const monthsEl=q('dashboard-months');
+  const statusEl=q('dashboard-status');
+  const subtitleEl=q('dashboard-subtitle');
+  const keys=Object.keys(data).sort();
+
+  if(!keys.length){
+    metricsEl.innerHTML='<div class="summary-card wide"><div class="summary-note">Ainda nao existem lancamentos suficientes para montar o resumo.</div></div>';
+    monthsEl.innerHTML='<div class="dash-empty">Cadastre novos gastos e entradas para alimentar o dashboard.</div>';
+    renderBarList('dashboard-categories',[]);
+    renderBarList('dashboard-needs',[],'sage');
+    subtitleEl.textContent='Visao geral dos ultimos 6 meses';
+    statusEl.textContent='Sem dados no periodo.';
+    statusEl.className='dashboard-status';
+    return;
+  }
+
+  const currentKey=keys[keys.length-1];
+  const previousKey=keys[keys.length-2];
+  const current=data[currentKey];
+  const previous=previousKey?data[previousKey]:{entradas:0,saidas:0};
+  const saldo=current.entradas-current.saidas;
+
+  subtitleEl.textContent=`Mes atual: ${monthLabel(currentKey)}`;
+  statusEl.textContent='Dados consolidados a partir de lancamentos.';
+  statusEl.className='dashboard-status ok';
+
+  metricsEl.innerHTML=`
+    <div class="summary-card">
+      <div class="summary-kicker">Entradas</div>
+      <div class="summary-value pos">${moneyBR(current.entradas)}</div>
+      <div class="summary-note">vs mes anterior: ${percentChange(current.entradas, previous.entradas)}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-kicker">Saidas</div>
+      <div class="summary-value neg">${moneyBR(current.saidas)}</div>
+      <div class="summary-note">vs mes anterior: ${percentChange(current.saidas, previous.saidas)}</div>
+    </div>
+    <div class="summary-card wide">
+      <div class="summary-kicker">Saldo do mes</div>
+      <div class="summary-value ${saldo>=0?'pos':'neg'}">${moneyBR(saldo)}</div>
+      <div class="summary-note">Competencia ${monthLabel(currentKey)}</div>
+    </div>
+  `;
+
+  monthsEl.innerHTML=keys.slice(-6).reverse().map(key=>{
+    const item=data[key];
+    const balance=item.entradas-item.saidas;
+    return `
+      <div class="month-row">
+        <div>
+          <div class="month-name">${monthLabel(key)}</div>
+          <div class="dash-card-sub">${moneyBR(item.entradas)} entradas • ${moneyBR(item.saidas)} saidas</div>
+        </div>
+        <div class="month-balance ${balance>=0?'pos':'neg'}">${moneyBR(balance)}</div>
+      </div>
+    `;
+  }).join('');
+
+  const totalSaidas=current.saidas || 0;
+  const categoryItems=Object.entries(current.categorias)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,6)
+    .map(([label,value])=>({
+      label,
+      value,
+      share:totalSaidas?Math.round((value/totalSaidas)*100):null
+    }));
+  renderBarList('dashboard-categories',categoryItems);
+
+  const needLabels={1:'Vital',2:'Basico',3:'Superfluo',4:'Bobagem'};
+  const needItems=Object.entries(current.necessidades)
+    .sort((a,b)=>Number(a[0])-Number(b[0]))
+    .map(([key,value])=>({
+      label:needLabels[key]||`Nivel ${key}`,
+      value,
+      share:totalSaidas?Math.round((value/totalSaidas)*100):null
+    }));
+  renderBarList('dashboard-needs',needItems,'sage');
+}
+
+async function refreshDashboard(){
+  const statusEl=q('dashboard-status');
+  if(!statusEl) return;
+  if(!db || !S.user){
+    statusEl.textContent='Entre no app para carregar o resumo.';
+    statusEl.className='dashboard-status err';
+    return;
+  }
+  statusEl.textContent='Atualizando resumo...';
+  statusEl.className='dashboard-status';
+  try{
+    const now=new Date();
+    const from=new Date(now.getFullYear(),now.getMonth()-5,1);
+    const fromKey=`${from.getFullYear()}-${String(from.getMonth()+1).padStart(2,'0')}-01`;
+    const { data, error } = await db
+      .from('lancamentos')
+      .select('mes_competencia,tipo,valor,categoria,necessidade')
+      .eq('user_id',S.user.id)
+      .gte('mes_competencia',fromKey)
+      .order('mes_competencia',{ascending:true});
+    if(error) throw error;
+    renderDashboard(aggregateDashboard(data || []));
+  }catch(_ex){
+    statusEl.textContent='Nao foi possivel carregar o dashboard.';
+    statusEl.className='dashboard-status err';
+  }
+}
+
+function refreshDashboardIfVisible(){
+  const tab=q('tab-dashboard');
+  if(tab && tab.classList.contains('active')) refreshDashboard();
 }
 
 async function openList(tab){
@@ -315,23 +656,40 @@ async function openList(tab){
   const listEl=q('sheet-list'),titleEl=q('sheet-title');
   listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Carregando...</p></div>';
   titleEl.textContent=tab==='gastos'?'Meus Gastos':'Minhas Entradas';
-  q('list-overlay').classList.add('show');q('list-sheet').classList.add('show');
+  q('list-overlay').classList.add('show');
+  q('list-sheet').classList.add('show');
   let items=[];
-  if(tab==='gastos'){const{data}=await db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);items=data||[];}
-  else{const{data}=await db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);items=data||[];}
-  if(!items.length){listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔍</div><p>Nenhum registro ainda</p></div>';return;}
+  if(tab==='gastos'){
+    const{data}=await db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
+    items=data||[];
+  }else{
+    const{data}=await db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(150);
+    items=data||[];
+  }
+  if(!items.length){
+    listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔍</div><p>Nenhum registro ainda</p></div>';
+    return;
+  }
   const groups={};
-  items.forEach(item=>{const d=item.data.slice(0,10);if(!groups[d])groups[d]=[];groups[d].push(item);});
+  items.forEach(item=>{
+    const d=item.data.slice(0,10);
+    if(!groups[d])groups[d]=[];
+    groups[d].push(item);
+  });
   listEl.innerHTML='';
   Object.entries(groups).forEach(([date,records])=>{
-    const dh=document.createElement('div');dh.className='day-header';dh.textContent=formatDay(date);listEl.appendChild(dh);
+    const dh=document.createElement('div');
+    dh.className='day-header';
+    dh.textContent=formatDay(date);
+    listEl.appendChild(dh);
     records.forEach(rec=>{
-      const el=document.createElement('div');el.className='list-item';
+      const el=document.createElement('div');
+      el.className='list-item';
       const isG=tab==='gastos';
       const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
       const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
-      const title=isG?(rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mãe':'Gasto')):origemLabel(rec.origem);
-      const sub=isG?(rec.dono==='mae'?'👩 Minha Mãe':rec.categoria||''):(rec.origem_de||rec.origem_especificacao||'');
+      const title=isG?(rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mae':'Gasto')):origemLabel(rec.origem);
+      const sub=isG?(rec.dono==='mae'?'Minha Mae':rec.categoria||''):(rec.origem_de||rec.origem_especificacao||'');
       const val='R$ '+rec.valor.toLocaleString('pt-BR',{minimumFractionDigits:2});
       el.innerHTML=`
         <div class="list-item-icon ${isG?'terra':'sage'}">${icon}</div>
@@ -351,20 +709,21 @@ function openDetail(rec,tab){
   const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
   const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
   const di=q('detail-icon');
-  di.textContent=icon;di.style.background=isG?'#FAE8E1':'#E3EEE2';
+  di.textContent=icon;
+  di.style.background=isG?'#FAE8E1':'#E3EEE2';
   q('detail-title').textContent=isG?(rec.categoria||'Gasto'):origemLabel(rec.origem);
   const rows=[['Valor','R$ '+rec.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})]];
   if(isG){
-    if(rec.dono==='mae')rows.push(['Quem','👩 Minha Mãe']);
+    if(rec.dono==='mae')rows.push(['Quem','Minha Mae']);
     if(rec.subcategoria)rows.push(['Subcategoria',rec.subcategoria]);
-    rows.push(['Pagamento',rec.tipo_pagamento==='a_vista'?'À vista':rec.tipo_pagamento]);
+    rows.push(['Pagamento',rec.tipo_pagamento==='a_vista'?'A vista':rec.tipo_pagamento]);
     rows.push(['Forma',fmtForma(rec.forma_pagamento)]);
     rows.push(['Banco',rec.banco]);
-    if(rec.necessidade)rows.push(['Necessidade',['','Vital','Básico','Supérfluo','Bobagem'][rec.necessidade]]);
+    if(rec.necessidade)rows.push(['Necessidade',['','Vital','Basico','Superfluo','Bobagem'][rec.necessidade]]);
   }else{
     if(rec.origem_de)rows.push(['De quem',rec.origem_de]);
     if(rec.origem_motivo)rows.push(['Motivo',rec.origem_motivo]);
-    if(rec.origem_especificacao)rows.push(['Especificação',rec.origem_especificacao]);
+    if(rec.origem_especificacao)rows.push(['Especificacao',rec.origem_especificacao]);
   }
   rows.push(['Data',formatDateTime(rec.data)]);
   q('detail-rows').innerHTML=rows.map(([k,v])=>`<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`).join('');
@@ -374,28 +733,58 @@ function openDetail(rec,tab){
 q('sheet-close').addEventListener('click',closeList);
 q('list-overlay').addEventListener('click',closeList);
 q('detail-close').addEventListener('click',()=>q('detail-overlay').classList.remove('show'));
-q('detail-overlay').addEventListener('click',e=>{if(e.target===q('detail-overlay'))q('detail-overlay').classList.remove('show');});
+q('detail-overlay').addEventListener('click',e=>{
+  if(e.target===q('detail-overlay'))q('detail-overlay').classList.remove('show');
+});
 
-function closeList(){q('list-overlay').classList.remove('show');q('list-sheet').classList.remove('show');}
+function closeList(){
+  q('list-overlay').classList.remove('show');
+  q('list-sheet').classList.remove('show');
+}
 
-function enqueueOffline(tabela,dados){S.offlineQ.push({tabela,dados,ts:Date.now()});localStorage.setItem('offlineQ',JSON.stringify(S.offlineQ));}
+function enqueueOffline(tabela,dados){
+  S.offlineQ.push({tabela,dados,ts:Date.now()});
+  localStorage.setItem('offlineQ',JSON.stringify(S.offlineQ));
+}
 
 function toast(msg,tipo=''){
-  const el=q('toast');el.textContent=msg;el.className=`toast show ${tipo}`;
-  clearTimeout(_tt);_tt=setTimeout(()=>{el.className='toast';},2800);
+  const el=q('toast');
+  el.textContent=msg;
+  el.className=`toast show ${tipo}`;
+  clearTimeout(_tt);
+  _tt=setTimeout(()=>{el.className='toast';},2800);
 }
 
 function formatDay(iso){
   const hoje=new Date().toISOString().slice(0,10);
   const ontem=new Date(Date.now()-86400000).toISOString().slice(0,10);
-  if(iso===hoje)return'Hoje';if(iso===ontem)return'Ontem';
+  if(iso===hoje)return'Hoje';
+  if(iso===ontem)return'Ontem';
   return new Date(iso+'T12:00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'numeric',month:'short'});
 }
 
 function formatDateTime(iso){
-  if(!iso)return'';const d=new Date(iso);
+  if(!iso)return'';
+  const d=new Date(iso);
   return d.toLocaleDateString('pt-BR')+(iso.includes('T')?' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'');
 }
 
-function origemLabel(o){return{pro_labore:'Pró-labore',adiantamento_lucros:'Adiantamento de lucros',bonus:'Bônus',reembolso:'Reembolso',aluguel:'Aluguel',transferencia:'Transferência',outro:'Outro'}[o]||o;}
-function fmtForma(f){return{credito:'Crédito',conta_corrente:'Conta corrente',transferencia:'Transferência'}[f]||f;}
+function origemLabel(o){
+  return{
+    pro_labore:'Pro-labore',
+    adiantamento_lucros:'Adiantamento de lucros',
+    bonus:'Bonus',
+    reembolso:'Reembolso',
+    aluguel:'Aluguel',
+    transferencia:'Transferencia',
+    outro:'Outro'
+  }[o]||o;
+}
+
+function fmtForma(f){
+  return{
+    credito:'Credito',
+    conta_corrente:'Conta corrente',
+    transferencia:'Transferencia'
+  }[f]||f;
+}
