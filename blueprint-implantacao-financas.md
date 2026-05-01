@@ -600,6 +600,9 @@ Registro de execucao:
 - `2026-05-01`: corrigido o layout do app instalado no celular, ancorando telas, overlays e navegacao inferior ao frame da aplicacao e compactando a barra inferior no modo standalone; o cache do app foi atualizado para `financas-v10`
 - `2026-05-01`: revertido o posicionamento estrutural de telas e menu inferior para `fixed`, restaurando a barra de navegacao parada no Safari e no app instalado, com padding extra nas areas rolaveis para nao esconder campos atras do menu; o cache do app foi atualizado para `financas-v11`
 - `2026-05-01`: a aba `Parcelas` passou a reutilizar exatamente o container rolavel de `Resumo` (`dashboard-scroll`) e teve removido o bloco explicativo inutil, alinhando seu comportamento de scroll ao painel que ja funcionava; o cache do app foi atualizado para `financas-v12`
+- `2026-05-01`: refinado o visual dos botoes principais de salvar, com altura maior, tipografia mais forte e presenca mais consistente nas telas de gastos, entradas, parcelas e edicao; o cache do app foi atualizado para `financas-v13`
+- `2026-05-01`: reforcada a resiliencia de leitura de dados: o `Resumo` passou a cair automaticamente para `gastos` + `entradas` quando `lancamentos` ou a view temporal nao estiverem disponiveis, e as listagens passaram a tentar fallback via `lancamentos` quando o legado vier vazio; o cache do app foi atualizado para `financas-v14`
+- `2026-05-01`: adicionados timeout explicito nas leituras/escritas principais do Supabase e cache local dos ultimos dados de resumo, gastos e entradas, permitindo fallback visivel quando a conexao oscilar; o cache do app foi atualizado para `financas-v15`
 
 ### Fase 0 - Saneamento da base atual
 
