@@ -616,6 +616,7 @@ Registro de execucao:
 - `2026-05-02`: adicionado um modo diagnostico visivel dentro do app, com painel persistente para sessao, fonte do `Resumo`, fonte das listas, ultima acao e ultimo erro; os eventos de autenticacao, refresh de sessao, gravacao, resumo e listas passaram a alimentar esse painel para identificar se a falha vem de auth, Supabase ou fallback local; o cache do app foi atualizado para `financas-v21`
 - `2026-05-02`: o diagnostico mostrou timeout no caminho legado de `gastos`; a gravacao de gastos e entradas foi movida para `lancamentos` como fluxo principal, com espelho legado opcional e nao bloqueante, e as listas passaram a consultar primeiro `lancamentos`, caindo para o legado apenas se necessario; o cache do app foi atualizado para `financas-v22`
 - `2026-05-02`: o `Resumo` deixou de falhar por inteiro quando o legado demora; o fallback de `gastos`/`entradas` passou a ser parcial e tolerante a timeout, preservando o painel mesmo quando so parte das consultas antigas responde, e o diagnostico agora reflete corretamente quando o resumo veio de `lancamentos`, legado completo ou legado parcial; o cache do app foi atualizado para `financas-v23`
+- `2026-05-02`: endurecida a resiliencia de conexao: timeouts de `Resumo` e listas foram ampliados, consultas remotas passaram a fazer uma segunda tentativa automatica antes de falhar, e a validacao de sessao deixou de derrubar o login local quando o problema e apenas lentidao momentanea de rede; o cache do app foi atualizado para `financas-v24`
 
 ### Fase 0 - Saneamento da base atual
 

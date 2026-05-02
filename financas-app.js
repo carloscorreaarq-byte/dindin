@@ -203,7 +203,7 @@ async function ensureActiveSession(){
       authDetail:S.user?.email || 'Verificando token local',
       lastAction:'Conferindo sessao ativa'
     });
-    const { data, error } = await withTimeout(db.auth.getSession(),2500,'sessao atual');
+    const { data, error } = await runWithRetry(()=>db.auth.getSession(),6000,'sessao atual',9000);
     if(error) throw error;
     if(data?.session?.user){
       S.user=data.session.user;
@@ -222,7 +222,7 @@ async function ensureActiveSession(){
       authDetail:S.user?.email || 'Tentando renovar token',
       lastAction:'Tentando renovar a sessao'
     });
-    const refreshed=await withTimeout(db.auth.refreshSession(),4000,'renovacao da sessao');
+    const refreshed=await runWithRetry(()=>db.auth.refreshSession(),8000,'renovacao da sessao',12000);
     if(refreshed?.error) throw refreshed.error;
     if(refreshed?.data?.session?.user){
       S.user=refreshed.data.session.user;
@@ -236,6 +236,16 @@ async function ensureActiveSession(){
       return true;
     }
   }catch(ex){
+    if(S.user && isTimeoutError(ex)){
+      setDiagnostic({
+        auth:'Sessao mantida localmente',
+        authTone:'',
+        authDetail:S.user?.email || 'A validacao demorou, mas a sessao local sera mantida.',
+        lastAction:'Timeout na validacao de sessao; mantendo sessao local'
+      });
+      setDiagnosticError(ex,'Sessao');
+      return true;
+    }
     setDiagnostic({
       auth:'Sessao perdida',
       authTone:'err',
@@ -281,8 +291,23 @@ async function withTimeout(promise,ms,label='operacao'){
   }
 }
 
-const DASHBOARD_REMOTE_TIMEOUT_MS = 4500;
-const LIST_REMOTE_TIMEOUT_MS = 3500;
+function isTimeoutError(error){
+  return String(error?.message || '').includes('Tempo esgotado');
+}
+
+async function runWithRetry(factory,baseMs,label,retryMs=0){
+  try{
+    return await withTimeout(factory(),baseMs,label);
+  }catch(ex){
+    if(!retryMs || !isTimeoutError(ex)) throw ex;
+    return withTimeout(factory(),retryMs,`${label} (2a tentativa)`);
+  }
+}
+
+const DASHBOARD_REMOTE_TIMEOUT_MS = 8000;
+const DASHBOARD_REMOTE_RETRY_MS = 12000;
+const LIST_REMOTE_TIMEOUT_MS = 8000;
+const LIST_REMOTE_RETRY_MS = 12000;
 
 function currentMonthStart(){
   const now=new Date();
@@ -2272,28 +2297,30 @@ async function refreshDashboard(){
     const casaConfig=S.casaAtualConfig || getCasaAtualConfig();
     if(!S.casaAtualConfig) loadCasaAtualConfig().catch(()=>{});
     const [basePrimary,originPrimary,casaPrimary] = await Promise.allSettled([
-      withTimeout(
-        db
+      runWithRetry(
+        ()=>db
           .from('lancamentos')
           .select('mes_competencia,tipo,valor,categoria,necessidade')
           .eq('user_id',S.user.id)
           .gte('mes_competencia',fromKey)
           .order('mes_competencia',{ascending:true}),
         DASHBOARD_REMOTE_TIMEOUT_MS,
-        'resumo em lancamentos'
+        'resumo em lancamentos',
+        DASHBOARD_REMOTE_RETRY_MS
       ),
-      withTimeout(
-        db
+      runWithRetry(
+        ()=>db
           .from('v_gastos_origem_competencia')
           .select('mes_analisado,gasto_novo_no_mes,custo_herdado_mes,gasto_jogado_para_futuro_no_mes,parcelamentos_ativos_mes')
           .eq('user_id',S.user.id)
           .gte('mes_analisado',fromKey)
           .order('mes_analisado',{ascending:true}),
         DASHBOARD_REMOTE_TIMEOUT_MS,
-        'resumo temporal'
+        'resumo temporal',
+        DASHBOARD_REMOTE_RETRY_MS
       ),
-      withTimeout(
-        db
+      runWithRetry(
+        ()=>db
           .from('lancamentos')
           .select('mes_competencia,tipo,valor')
           .eq('user_id',S.user.id)
@@ -2301,7 +2328,8 @@ async function refreshDashboard(){
           .gte('mes_competencia',fromKey)
           .order('mes_competencia',{ascending:true}),
         DASHBOARD_REMOTE_TIMEOUT_MS,
-        'resultado da casa atual'
+        'resultado da casa atual',
+        DASHBOARD_REMOTE_RETRY_MS
       )
     ]);
     const baseRes=basePrimary.status==='fulfilled' ? basePrimary.value : { data:null, error:basePrimary.reason };
@@ -2321,15 +2349,17 @@ async function refreshDashboard(){
       }
     }else{
       const [legacyGastos,legacyEntradas]=await Promise.allSettled([
-        withTimeout(
-          db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+        runWithRetry(
+          ()=>db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
           DASHBOARD_REMOTE_TIMEOUT_MS,
-          'gastos legados'
+          'gastos legados',
+          DASHBOARD_REMOTE_RETRY_MS
         ),
-        withTimeout(
-          db.from('entradas').select('valor,data').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+        runWithRetry(
+          ()=>db.from('entradas').select('valor,data').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
           DASHBOARD_REMOTE_TIMEOUT_MS,
-          'entradas legadas'
+          'entradas legadas',
+          DASHBOARD_REMOTE_RETRY_MS
         )
       ]);
       const legacyGastosRes=legacyGastos.status==='fulfilled' ? legacyGastos.value : { data:[], error:legacyGastos.reason };
@@ -2359,15 +2389,17 @@ async function refreshDashboard(){
       casaRows=casaRes.data||[];
     }else{
       const [legacyMoradia,legacyAluguel]=await Promise.allSettled([
-        withTimeout(
-          db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
+        runWithRetry(
+          ()=>db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
           DASHBOARD_REMOTE_TIMEOUT_MS,
-          'gastos de moradia'
+          'gastos de moradia',
+          DASHBOARD_REMOTE_RETRY_MS
         ),
-        withTimeout(
-          db.from('entradas').select('valor,data').eq('user_id',S.user.id).eq('origem','aluguel').gte('data',fromKey).order('data',{ascending:true}),
+        runWithRetry(
+          ()=>db.from('entradas').select('valor,data').eq('user_id',S.user.id).eq('origem','aluguel').gte('data',fromKey).order('data',{ascending:true}),
           DASHBOARD_REMOTE_TIMEOUT_MS,
-          'entradas de aluguel'
+          'entradas de aluguel',
+          DASHBOARD_REMOTE_RETRY_MS
         )
       ]);
       const legacyMoradiaRes=legacyMoradia.status==='fulfilled' ? legacyMoradia.value : { data:[], error:legacyMoradia.reason };
@@ -2648,8 +2680,8 @@ async function openListFast(tab){
     let error=null;
     let sourceLabel='';
     if(tab==='gastos'){
-      const modernRes=await withTimeout(
-        db
+      const modernRes=await runWithRetry(
+        ()=>db
           .from('lancamentos')
           .select('id,user_id,valor,categoria,subcategoria,necessidade,data_evento,proprietario_economico,forma_pagamento,banco_referencia,descricao,observacoes')
           .eq('user_id',S.user.id)
@@ -2657,16 +2689,18 @@ async function openListFast(tab){
           .order('data_evento',{ascending:false})
           .limit(100),
         LIST_REMOTE_TIMEOUT_MS,
-        'lista de gastos em lancamentos'
+        'lista de gastos em lancamentos',
+        LIST_REMOTE_RETRY_MS
       );
       items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
       error=modernRes.error;
       sourceLabel='Supabase / gastos via lancamentos';
       if((error || !items.length) && !modernRes.error){
-        const legacyRes=await withTimeout(
-          db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
+        const legacyRes=await runWithRetry(
+          ()=>db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
           LIST_REMOTE_TIMEOUT_MS,
-          'lista de gastos'
+          'lista de gastos',
+          LIST_REMOTE_RETRY_MS
         );
         items=legacyRes.data||[];
         error=legacyRes.error;
@@ -2674,8 +2708,8 @@ async function openListFast(tab){
       }
       if(items.length) writeCache(GASTOS_CACHE_KEY,items);
     }else{
-      const modernRes=await withTimeout(
-        db
+      const modernRes=await runWithRetry(
+        ()=>db
           .from('lancamentos')
           .select('id,user_id,valor,subcategoria,data_evento,descricao,observacoes')
           .eq('user_id',S.user.id)
@@ -2683,16 +2717,18 @@ async function openListFast(tab){
           .order('data_evento',{ascending:false})
           .limit(100),
         LIST_REMOTE_TIMEOUT_MS,
-        'lista de entradas em lancamentos'
+        'lista de entradas em lancamentos',
+        LIST_REMOTE_RETRY_MS
       );
       items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
       error=modernRes.error;
       sourceLabel='Supabase / entradas via lancamentos';
       if((error || !items.length) && !modernRes.error){
-        const legacyRes=await withTimeout(
-          db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
+        const legacyRes=await runWithRetry(
+          ()=>db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
           LIST_REMOTE_TIMEOUT_MS,
-          'lista de entradas'
+          'lista de entradas',
+          LIST_REMOTE_RETRY_MS
         );
         items=legacyRes.data||[];
         error=legacyRes.error;
