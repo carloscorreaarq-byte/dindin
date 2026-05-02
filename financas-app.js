@@ -1415,6 +1415,11 @@ function buildLancamentoFromEntrada(entrada,legacyId){
   };
 }
 
+function extractLegacyIdFromObservacoes(text){
+  const match=String(text || '').match(/legado_id=([0-9a-f-]{8,})/i);
+  return match?.[1] || null;
+}
+
 async function insertLancamento(lancamento){
   if(!S.user || !db) return;
   const { error } = await withTimeout(
@@ -1423,6 +1428,76 @@ async function insertLancamento(lancamento){
     'lancamentos'
   );
   if(error) throw error;
+}
+
+async function insertLegacyGastoBestEffort(gasto){
+  if(!S.user || !db) return false;
+  try{
+    const { error } = await withTimeout(
+      db.from('gastos').insert(gasto),
+      2500,
+      'espelho legado de gastos'
+    );
+    return !error;
+  }catch{
+    return false;
+  }
+}
+
+async function insertLegacyEntradaBestEffort(entrada){
+  if(!S.user || !db) return false;
+  try{
+    const { error } = await withTimeout(
+      db.from('entradas').insert(entrada),
+      2500,
+      'espelho legado de entradas'
+    );
+    return !error;
+  }catch{
+    return false;
+  }
+}
+
+async function updateLegacyGastoBestEffort(legacyId,updated){
+  if(!S.user || !db || !legacyId) return false;
+  try{
+    const { error } = await withTimeout(
+      db.from('gastos').update(updated).eq('user_id',S.user.id).eq('id',legacyId),
+      2500,
+      'espelho legado de gastos'
+    );
+    return !error;
+  }catch{
+    return false;
+  }
+}
+
+async function updateLegacyEntradaBestEffort(legacyId,updated){
+  if(!S.user || !db || !legacyId) return false;
+  try{
+    const { error } = await withTimeout(
+      db.from('entradas').update(updated).eq('user_id',S.user.id).eq('id',legacyId),
+      2500,
+      'espelho legado de entradas'
+    );
+    return !error;
+  }catch{
+    return false;
+  }
+}
+
+async function deleteLegacyRecordBestEffort(table,legacyId){
+  if(!S.user || !db || !legacyId) return false;
+  try{
+    const { error } = await withTimeout(
+      db.from(table).delete().eq('user_id',S.user.id).eq('id',legacyId),
+      2500,
+      `espelho legado de ${table}`
+    );
+    return !error;
+  }catch{
+    return false;
+  }
 }
 
 async function getLinkedLancamentoIds(legacyId){
@@ -1490,7 +1565,7 @@ async function salvarGasto(){
     lastError:'Nenhum erro registrado'
   });
   try{
-    let lancamentoWarning=false;
+    let legacyMirrorWarning=false;
     if(isCustom&&sub)await persistCustomSub(S.catId,sub);
     const legacyId=newUuid();
     const gasto={
@@ -1507,22 +1582,17 @@ async function salvarGasto(){
       necessidade:isEu?S.necessidade:null
     };
     if(S.user){
-      const { error } = await withTimeout(
-        db.from('gastos').insert(gasto),
-        12000,
-        'gastos'
-      );
-      if(error) throw error;
-      try{await syncLinkedLancamentosForGasto(gasto,legacyId);}
-      catch{lancamentoWarning=true;}
+      await insertLancamento(buildLancamentoFromGasto(gasto,legacyId));
+      const mirrored=await insertLegacyGastoBestEffort(gasto);
+      if(!mirrored) legacyMirrorWarning=true;
     }else{
       enqueueOffline('gastos',gasto);
     }
     localStorage.setItem('gPresets',JSON.stringify({forma:q('sel-forma').value,banco:q('sel-banco').value}));
     setDiagnostic({
-      lastAction:lancamentoWarning?'Gasto salvo com alerta de sincronizacao':'Gasto salvo com sucesso'
+      lastAction:legacyMirrorWarning?'Gasto salvo via lancamentos; espelho legado pendente':'Gasto salvo com sucesso'
     });
-    toast(lancamentoWarning?'Gasto salvo, mas o resumo nao foi atualizado.':'Gasto salvo!',lancamentoWarning?'err':'ok');
+    toast(legacyMirrorWarning?'Gasto salvo! O espelho antigo ficou pendente.':'Gasto salvo!',legacyMirrorWarning?'err':'ok');
     resetGastos();
     refreshDashboardIfVisible();
   }catch(ex){
@@ -1661,7 +1731,7 @@ async function salvarEntrada(){
     lastError:'Nenhum erro registrado'
   });
   try{
-    let lancamentoWarning=false;
+    let legacyMirrorWarning=false;
     const legacyId=newUuid();
     const entrada={
       id:legacyId,
@@ -1674,21 +1744,16 @@ async function salvarEntrada(){
       data:q('inp-data-entrada').value
     };
     if(S.user){
-      const { error } = await withTimeout(
-        db.from('entradas').insert(entrada),
-        12000,
-        'entradas'
-      );
-      if(error) throw error;
-      try{await syncLinkedLancamentosForEntrada(entrada,legacyId);}
-      catch{lancamentoWarning=true;}
+      await insertLancamento(buildLancamentoFromEntrada(entrada,legacyId));
+      const mirrored=await insertLegacyEntradaBestEffort(entrada);
+      if(!mirrored) legacyMirrorWarning=true;
     }else{
       enqueueOffline('entradas',entrada);
     }
     setDiagnostic({
-      lastAction:lancamentoWarning?'Entrada salva com alerta de sincronizacao':'Entrada salva com sucesso'
+      lastAction:legacyMirrorWarning?'Entrada salva via lancamentos; espelho legado pendente':'Entrada salva com sucesso'
     });
-    toast(lancamentoWarning?'Entrada salva, mas o resumo nao foi atualizado.':'Entrada salva!',lancamentoWarning?'err':'ok');
+    toast(legacyMirrorWarning?'Entrada salva! O espelho antigo ficou pendente.':'Entrada salva!',legacyMirrorWarning?'err':'ok');
     resetEntradas();
     refreshDashboardIfVisible();
   }catch(ex){
@@ -1985,6 +2050,10 @@ function buildLegacyLikeRecordFromLancamento(row){
     origem_de:null,
     origem_motivo:null,
     origem_especificacao:null,
+    descricao:row.descricao || null,
+    observacoes:row.observacoes || null,
+    legacy_id:extractLegacyIdFromObservacoes(row.observacoes),
+    _source:'lancamentos',
   };
 }
 
@@ -2012,8 +2081,12 @@ function renderListRecords(listEl,items,tab){
       const isG=tab==='gastos';
       const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
       const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
-      const title=isG?(rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mae':'Gasto')):origemLabel(rec.origem);
-      const sub=isG?(rec.dono==='mae'?'Minha Mae':rec.categoria||''):(rec.origem_de||rec.origem_especificacao||'');
+      const title=isG
+        ? (rec.subcategoria||rec.categoria||(rec.dono==='mae'?'Gasto Mae':'Gasto'))
+        : (rec.descricao || origemLabel(rec.origem));
+      const sub=isG
+        ? (rec.dono==='mae'?'Minha Mae':rec.categoria||'')
+        : (rec.origem_de||rec.origem_especificacao||(rec.origem ? origemLabel(rec.origem) : ''));
       const val='R$ '+Number(rec.valor).toLocaleString('pt-BR',{minimumFractionDigits:2});
       el.innerHTML=`
         <div class="list-item-icon ${isG?'terra':'sage'}">${icon}</div>
@@ -2237,11 +2310,17 @@ async function refreshDashboard(){
     let dashboardRows=[];
     let originRows=[];
     let casaRows=[];
+    let summarySource='Supabase / lancamentos';
+    let summaryTone='ok';
+    let summaryAction='Resumo atualizado do Supabase';
 
-    if(!baseRes.error && (baseRes.data||[]).length){
+    if(!baseRes.error){
       dashboardRows=baseRes.data||[];
+      if(!(baseRes.data||[]).length){
+        summarySource='Supabase / lancamentos (sem dados no periodo)';
+      }
     }else{
-      const [legacyGastos,legacyEntradas]=await Promise.all([
+      const [legacyGastos,legacyEntradas]=await Promise.allSettled([
         withTimeout(
           db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
           DASHBOARD_REMOTE_TIMEOUT_MS,
@@ -2253,19 +2332,33 @@ async function refreshDashboard(){
           'entradas legadas'
         )
       ]);
-      if(legacyGastos.error) throw legacyGastos.error;
-      if(legacyEntradas.error) throw legacyEntradas.error;
-      dashboardRows=buildDashboardRowsFromLegacy(legacyGastos.data||[],legacyEntradas.data||[]);
+      const legacyGastosRes=legacyGastos.status==='fulfilled' ? legacyGastos.value : { data:[], error:legacyGastos.reason };
+      const legacyEntradasRes=legacyEntradas.status==='fulfilled' ? legacyEntradas.value : { data:[], error:legacyEntradas.reason };
+      dashboardRows=buildDashboardRowsFromLegacy(legacyGastosRes.data||[],legacyEntradasRes.data||[]);
+      summarySource='Supabase / legado';
+      summaryAction='Resumo montado com fallback legado';
+      if(!dashboardRows.length && legacyGastosRes.error && legacyEntradasRes.error){
+        throw legacyGastosRes.error;
+      }
+      if(legacyGastosRes.error || legacyEntradasRes.error){
+        summarySource='Supabase / legado parcial';
+        summaryTone='err';
+        summaryAction='Resumo montado com fallback legado parcial';
+        setDiagnosticError(
+          legacyGastosRes.error || legacyEntradasRes.error,
+          'Resumo parcial'
+        );
+      }
     }
 
     if(!originRes.error){
       originRows=originRes.data||[];
     }
 
-    if(!casaRes.error && (casaRes.data||[]).length){
+    if(!casaRes.error){
       casaRows=casaRes.data||[];
     }else{
-      const [legacyMoradia,legacyAluguel]=await Promise.all([
+      const [legacyMoradia,legacyAluguel]=await Promise.allSettled([
         withTimeout(
           db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
           DASHBOARD_REMOTE_TIMEOUT_MS,
@@ -2277,9 +2370,9 @@ async function refreshDashboard(){
           'entradas de aluguel'
         )
       ]);
-      if(legacyMoradia.error) throw legacyMoradia.error;
-      if(legacyAluguel.error) throw legacyAluguel.error;
-      casaRows=buildCasaAtualRowsFromLegacy(legacyMoradia.data||[],legacyAluguel.data||[]);
+      const legacyMoradiaRes=legacyMoradia.status==='fulfilled' ? legacyMoradia.value : { data:[], error:legacyMoradia.reason };
+      const legacyAluguelRes=legacyAluguel.status==='fulfilled' ? legacyAluguel.value : { data:[], error:legacyAluguel.reason };
+      casaRows=buildCasaAtualRowsFromLegacy(legacyMoradiaRes.data||[],legacyAluguelRes.data||[]);
     }
 
     renderDashboard(
@@ -2290,14 +2383,11 @@ async function refreshDashboard(){
       aggregateCasaAtual(casaRows,casaConfig,monthKeys),
       casaConfig
     );
-    const baseSource=(!baseRes.error && (baseRes.data||[]).length)
-      ? 'Supabase / lancamentos'
-      : 'Supabase / legado';
     const originSuffix=!originRes.error ? ' + origem temporal' : ' + sem origem temporal';
     setDiagnostic({
-      summary:`${baseSource}${originSuffix}`,
-      summaryTone:'ok',
-      lastAction:'Resumo atualizado do Supabase'
+      summary:`${summarySource}${originSuffix}`,
+      summaryTone,
+      lastAction:summaryAction
     });
     writeCache(DASHBOARD_CACHE_KEY,{
       dashboardRows,
@@ -2503,7 +2593,7 @@ function openDetail(rec,tab){
   const di=q('detail-icon');
   di.textContent=icon;
   di.style.background=isG?'#FAE8E1':'#E3EEE2';
-  q('detail-title').textContent=isG?(rec.categoria||'Gasto'):origemLabel(rec.origem);
+  q('detail-title').textContent=isG?(rec.categoria||'Gasto'):(rec.descricao || origemLabel(rec.origem));
   const rows=[['Valor','R$ '+rec.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})]];
   if(isG){
     if(rec.dono==='mae')rows.push(['Quem','Minha Mae']);
@@ -2513,6 +2603,7 @@ function openDetail(rec,tab){
     rows.push(['Banco',rec.banco]);
     if(rec.necessidade)rows.push(['Necessidade',['','Vital','Basico','Superfluo','Bobagem'][rec.necessidade]]);
   }else{
+    if(rec.descricao)rows.push(['Descricao',rec.descricao]);
     if(rec.origem_de)rows.push(['De quem',rec.origem_de]);
     if(rec.origem_motivo)rows.push(['Motivo',rec.origem_motivo]);
     if(rec.origem_especificacao)rows.push(['Especificacao',rec.origem_especificacao]);
@@ -2557,64 +2648,54 @@ async function openListFast(tab){
     let error=null;
     let sourceLabel='';
     if(tab==='gastos'){
-      const [legacy,modern]=await Promise.allSettled([
-        withTimeout(
+      const modernRes=await withTimeout(
+        db
+          .from('lancamentos')
+          .select('id,user_id,valor,categoria,subcategoria,necessidade,data_evento,proprietario_economico,forma_pagamento,banco_referencia,descricao,observacoes')
+          .eq('user_id',S.user.id)
+          .eq('tipo','saida')
+          .order('data_evento',{ascending:false})
+          .limit(100),
+        LIST_REMOTE_TIMEOUT_MS,
+        'lista de gastos em lancamentos'
+      );
+      items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
+      error=modernRes.error;
+      sourceLabel='Supabase / gastos via lancamentos';
+      if((error || !items.length) && !modernRes.error){
+        const legacyRes=await withTimeout(
           db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
           LIST_REMOTE_TIMEOUT_MS,
           'lista de gastos'
-        ),
-        withTimeout(
-          db
-            .from('lancamentos')
-            .select('id,user_id,valor,categoria,subcategoria,necessidade,data_evento,proprietario_economico,forma_pagamento,banco_referencia')
-            .eq('user_id',S.user.id)
-            .eq('tipo','saida')
-            .order('data_evento',{ascending:false})
-            .limit(100),
-          LIST_REMOTE_TIMEOUT_MS,
-          'lista de gastos em lancamentos'
-        )
-      ]);
-      const legacyRes=legacy.status==='fulfilled' ? legacy.value : { data:null, error:legacy.reason };
-      const modernRes=modern.status==='fulfilled' ? modern.value : { data:null, error:modern.reason };
-      items=legacyRes.data||[];
-      error=legacyRes.error;
-      if((error || !items.length) && !modernRes.error && (modernRes.data||[]).length){
-        items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
-        error=null;
-        sourceLabel='Supabase / gastos via lancamentos';
-      }else{
+        );
+        items=legacyRes.data||[];
+        error=legacyRes.error;
         sourceLabel='Supabase / gastos legado';
       }
       if(items.length) writeCache(GASTOS_CACHE_KEY,items);
     }else{
-      const [legacy,modern]=await Promise.allSettled([
-        withTimeout(
+      const modernRes=await withTimeout(
+        db
+          .from('lancamentos')
+          .select('id,user_id,valor,subcategoria,data_evento,descricao,observacoes')
+          .eq('user_id',S.user.id)
+          .eq('tipo','entrada')
+          .order('data_evento',{ascending:false})
+          .limit(100),
+        LIST_REMOTE_TIMEOUT_MS,
+        'lista de entradas em lancamentos'
+      );
+      items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
+      error=modernRes.error;
+      sourceLabel='Supabase / entradas via lancamentos';
+      if((error || !items.length) && !modernRes.error){
+        const legacyRes=await withTimeout(
           db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
           LIST_REMOTE_TIMEOUT_MS,
           'lista de entradas'
-        ),
-        withTimeout(
-          db
-            .from('lancamentos')
-            .select('id,user_id,valor,subcategoria,data_evento')
-            .eq('user_id',S.user.id)
-            .eq('tipo','entrada')
-            .order('data_evento',{ascending:false})
-            .limit(100),
-          LIST_REMOTE_TIMEOUT_MS,
-          'lista de entradas em lancamentos'
-        )
-      ]);
-      const legacyRes=legacy.status==='fulfilled' ? legacy.value : { data:null, error:legacy.reason };
-      const modernRes=modern.status==='fulfilled' ? modern.value : { data:null, error:modern.reason };
-      items=legacyRes.data||[];
-      error=legacyRes.error;
-      if((error || !items.length) && !modernRes.error && (modernRes.data||[]).length){
-        items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
-        error=null;
-        sourceLabel='Supabase / entradas via lancamentos';
-      }else{
+        );
+        items=legacyRes.data||[];
+        error=legacyRes.error;
         sourceLabel='Supabase / entradas legado';
       }
       if(items.length) writeCache(ENTRADAS_CACHE_KEY,items);
@@ -2698,10 +2779,27 @@ async function saveEditedGasto(){
       lastAction:'Salvando alteracoes do gasto',
       lastError:'Nenhum erro registrado'
     });
-    const { error } = await db.from('gastos').update(updated).eq('user_id',S.user.id).eq('id',rec.id);
-    if(error) throw error;
     const merged={...rec,...updated};
-    await syncLinkedLancamentosForGasto(merged,rec.id);
+    if(rec._source==='lancamentos'){
+      const payload=buildLancamentoFromGasto(merged,rec.legacy_id || rec.id);
+      const { error } = await withTimeout(
+        db.from('lancamentos').update(payload).eq('user_id',S.user.id).eq('id',rec.id),
+        8000,
+        'lancamento do gasto'
+      );
+      if(error) throw error;
+      await updateLegacyGastoBestEffort(rec.legacy_id,{
+        valor:updated.valor,
+        data:updated.data,
+        categoria:updated.categoria,
+        subcategoria:updated.subcategoria,
+        necessidade:updated.necessidade,
+      });
+    }else{
+      const { error } = await db.from('gastos').update(updated).eq('user_id',S.user.id).eq('id',rec.id);
+      if(error) throw error;
+      await syncLinkedLancamentosForGasto(merged,rec.id);
+    }
     S.detailRecord=merged;
     closeEditGasto();
     q('detail-overlay').classList.remove('show');
@@ -2740,13 +2838,33 @@ async function deleteCurrentRecord(){
       lastError:'Nenhum erro registrado'
     });
     if(tab==='gastos'){
-      const { error } = await db.from('gastos').delete().eq('user_id',S.user.id).eq('id',rec.id);
-      if(error) throw error;
-      await deleteLinkedLancamentos(rec.id);
+      if(rec._source==='lancamentos'){
+        const { error } = await withTimeout(
+          db.from('lancamentos').delete().eq('user_id',S.user.id).eq('id',rec.id),
+          8000,
+          'exclusao do gasto em lancamentos'
+        );
+        if(error) throw error;
+        await deleteLegacyRecordBestEffort('gastos',rec.legacy_id);
+      }else{
+        const { error } = await db.from('gastos').delete().eq('user_id',S.user.id).eq('id',rec.id);
+        if(error) throw error;
+        await deleteLinkedLancamentos(rec.id);
+      }
     }else{
-      const { error } = await db.from('entradas').delete().eq('user_id',S.user.id).eq('id',rec.id);
-      if(error) throw error;
-      await deleteLinkedLancamentos(rec.id);
+      if(rec._source==='lancamentos'){
+        const { error } = await withTimeout(
+          db.from('lancamentos').delete().eq('user_id',S.user.id).eq('id',rec.id),
+          8000,
+          'exclusao da entrada em lancamentos'
+        );
+        if(error) throw error;
+        await deleteLegacyRecordBestEffort('entradas',rec.legacy_id);
+      }else{
+        const { error } = await db.from('entradas').delete().eq('user_id',S.user.id).eq('id',rec.id);
+        if(error) throw error;
+        await deleteLinkedLancamentos(rec.id);
+      }
     }
     q('detail-overlay').classList.remove('show');
     closeList();
