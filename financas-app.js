@@ -69,11 +69,16 @@ function bindAuthListener(){
   db.auth.onAuthStateChange(async (_e,session)=>{
     if(session){
       S.user=session.user;
+      S.sessionCheckedAt=Date.now();
       showApp();
       await loadCustomSubs();
       await loadCasaAtualConfig();
       refreshDashboardIfVisible();
-    }else showAuth();
+    }else{
+      S.user=null;
+      S.sessionCheckedAt=0;
+      showAuth();
+    }
   });
   authListenerBound=true;
 }
@@ -101,6 +106,7 @@ async function bootSupabase(){
     const {data:{session}}=await db.auth.getSession();
     if(session){
       S.user=session.user;
+      S.sessionCheckedAt=Date.now();
       showApp();
       await loadCustomSubs();
       await loadCasaAtualConfig();
@@ -138,16 +144,26 @@ function setupDashboard(){
 
 async function ensureActiveSession(){
   if(!db) return false;
-  if(S.user) return true;
+  const now=Date.now();
+  if(S.user && S.sessionCheckedAt && (now - S.sessionCheckedAt) < SESSION_RECHECK_MS) return true;
   try{
-    const { data, error } = await db.auth.getSession();
+    const { data, error } = await withTimeout(db.auth.getSession(),2500,'sessao atual');
     if(error) throw error;
     if(data?.session?.user){
       S.user=data.session.user;
+      S.sessionCheckedAt=Date.now();
+      return true;
+    }
+    const refreshed=await withTimeout(db.auth.refreshSession(),4000,'renovacao da sessao');
+    if(refreshed?.error) throw refreshed.error;
+    if(refreshed?.data?.session?.user){
+      S.user=refreshed.data.session.user;
+      S.sessionCheckedAt=Date.now();
       return true;
     }
   }catch{}
   S.user=null;
+  S.sessionCheckedAt=0;
   showAuth();
   return false;
 }
@@ -1920,8 +1936,9 @@ async function refreshDashboard(){
     statusEl.className='dashboard-status';
   }
   try{
-    const casaConfig=S.casaAtualConfig || await loadCasaAtualConfig();
-    const settled = await Promise.allSettled([
+    const casaConfig=S.casaAtualConfig || getCasaAtualConfig();
+    if(!S.casaAtualConfig) loadCasaAtualConfig().catch(()=>{});
+    const [basePrimary,originPrimary,casaPrimary] = await Promise.allSettled([
       withTimeout(
         db
           .from('lancamentos')
@@ -1952,50 +1969,54 @@ async function refreshDashboard(){
           .order('mes_competencia',{ascending:true}),
         DASHBOARD_REMOTE_TIMEOUT_MS,
         'resultado da casa atual'
-      ),
-      withTimeout(
-        db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
-        DASHBOARD_REMOTE_TIMEOUT_MS,
-        'gastos legados'
-      ),
-      withTimeout(
-        db.from('entradas').select('valor,data').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
-        DASHBOARD_REMOTE_TIMEOUT_MS,
-        'entradas legadas'
-      ),
-      withTimeout(
-        db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
-        DASHBOARD_REMOTE_TIMEOUT_MS,
-        'gastos de moradia'
-      ),
-      withTimeout(
-        db.from('entradas').select('valor,data').eq('user_id',S.user.id).eq('origem','aluguel').gte('data',fromKey).order('data',{ascending:true}),
-        DASHBOARD_REMOTE_TIMEOUT_MS,
-        'entradas de aluguel'
       )
     ]);
-    const [basePrimary,originPrimary,casaPrimary,legacyGastos,legacyEntradas,legacyMoradia,legacyAluguel]=settled.map(result=>
-      result.status==='fulfilled' ? result.value : { data:null, error:result.reason }
-    );
+    const baseRes=basePrimary.status==='fulfilled' ? basePrimary.value : { data:null, error:basePrimary.reason };
+    const originRes=originPrimary.status==='fulfilled' ? originPrimary.value : { data:null, error:originPrimary.reason };
+    const casaRes=casaPrimary.status==='fulfilled' ? casaPrimary.value : { data:null, error:casaPrimary.reason };
     let dashboardRows=[];
     let originRows=[];
     let casaRows=[];
 
-    if(!basePrimary.error && (basePrimary.data||[]).length){
-      dashboardRows=basePrimary.data||[];
+    if(!baseRes.error && (baseRes.data||[]).length){
+      dashboardRows=baseRes.data||[];
     }else{
+      const [legacyGastos,legacyEntradas]=await Promise.all([
+        withTimeout(
+          db.from('gastos').select('valor,data,categoria,necessidade').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+          DASHBOARD_REMOTE_TIMEOUT_MS,
+          'gastos legados'
+        ),
+        withTimeout(
+          db.from('entradas').select('valor,data').eq('user_id',S.user.id).gte('data',fromKey).order('data',{ascending:true}),
+          DASHBOARD_REMOTE_TIMEOUT_MS,
+          'entradas legadas'
+        )
+      ]);
       if(legacyGastos.error) throw legacyGastos.error;
       if(legacyEntradas.error) throw legacyEntradas.error;
       dashboardRows=buildDashboardRowsFromLegacy(legacyGastos.data||[],legacyEntradas.data||[]);
     }
 
-    if(!originPrimary.error){
-      originRows=originPrimary.data||[];
+    if(!originRes.error){
+      originRows=originRes.data||[];
     }
 
-    if(!casaPrimary.error && (casaPrimary.data||[]).length){
-      casaRows=casaPrimary.data||[];
+    if(!casaRes.error && (casaRes.data||[]).length){
+      casaRows=casaRes.data||[];
     }else{
+      const [legacyMoradia,legacyAluguel]=await Promise.all([
+        withTimeout(
+          db.from('gastos').select('valor,data').eq('user_id',S.user.id).eq('categoria','Moradia').gte('data',fromKey).order('data',{ascending:true}),
+          DASHBOARD_REMOTE_TIMEOUT_MS,
+          'gastos de moradia'
+        ),
+        withTimeout(
+          db.from('entradas').select('valor,data').eq('user_id',S.user.id).eq('origem','aluguel').gte('data',fromKey).order('data',{ascending:true}),
+          DASHBOARD_REMOTE_TIMEOUT_MS,
+          'entradas de aluguel'
+        )
+      ]);
       if(legacyMoradia.error) throw legacyMoradia.error;
       if(legacyAluguel.error) throw legacyAluguel.error;
       casaRows=buildCasaAtualRowsFromLegacy(legacyMoradia.data||[],legacyAluguel.data||[]);
