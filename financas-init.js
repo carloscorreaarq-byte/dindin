@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', async () => {
+  initDiagnosticMode();
   buildParcelas();
   buildCats();
   bindValor('val-gasto-inp','val-gasto-num',v=>S.gastoCents=v);

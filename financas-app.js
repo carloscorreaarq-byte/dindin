@@ -70,6 +70,12 @@ function bindAuthListener(){
     if(session){
       S.user=session.user;
       S.sessionCheckedAt=Date.now();
+      setDiagnostic({
+        auth:'Sessao ok',
+        authTone:'ok',
+        authDetail:session.user?.email || session.user?.id || 'Usuario autenticado',
+        lastAction:'Sessao confirmada pelo Supabase'
+      });
       showApp();
       await loadCustomSubs();
       await loadCasaAtualConfig();
@@ -77,6 +83,17 @@ function bindAuthListener(){
     }else{
       S.user=null;
       S.sessionCheckedAt=0;
+      setDiagnostic({
+        auth:'Sessao perdida',
+        authTone:'err',
+        authDetail:'Entre novamente para continuar.',
+        lastAction:'Supabase informou sessao ausente',
+        summary:'Sem sessao para carregar resumo',
+        summaryTone:'err',
+        list:'Sem sessao para carregar listas',
+        listTone:'err',
+        lastError:'Sessao ausente ou expirada.'
+      });
       showAuth();
     }
   });
@@ -86,11 +103,23 @@ function bindAuthListener(){
 async function bootSupabase(){
   const cfg=resolveSupabaseConfig();
   if(!isValidConfig(cfg)){
+    setDiagnostic({
+      auth:'Configuracao pendente',
+      authTone:'err',
+      authDetail:'Supabase URL e chave ainda nao estao prontas.',
+      lastAction:'App aguardando configuracao'
+    });
     showAuth();
     syncConfigUi();
     setConfigStatus('Preencha e salve a configuracao do Supabase para entrar.','err');
     return;
   }
+  setDiagnostic({
+    auth:'Inicializando Supabase',
+    authTone:'',
+    authDetail:'Preparando a conexao com o banco.',
+    lastAction:'Criando cliente Supabase'
+  });
   try{
     const { createClient } = supabase;
     db = createClient(cfg.url,cfg.anonKey,{
@@ -107,15 +136,36 @@ async function bootSupabase(){
     if(session){
       S.user=session.user;
       S.sessionCheckedAt=Date.now();
+      setDiagnostic({
+        auth:'Sessao ok',
+        authTone:'ok',
+        authDetail:session.user?.email || session.user?.id || 'Usuario autenticado',
+        lastAction:'Sessao carregada ao abrir o app'
+      });
       showApp();
       await loadCustomSubs();
       await loadCasaAtualConfig();
       refreshDashboardIfVisible();
-    }else showAuth();
+    }else{
+      setDiagnostic({
+        auth:'Sem sessao ativa',
+        authTone:'',
+        authDetail:'Supabase pronto; aguardando login.',
+        lastAction:'Conexao pronta sem usuario autenticado'
+      });
+      showAuth();
+    }
     syncConfigUi();
     setConfigStatus(hasEmbeddedConfig()?'Configuracao embarcada no app.':'Configuracao salva neste dispositivo.','ok');
   }catch(_ex){
     db=null;
+    setDiagnostic({
+      auth:'Erro ao iniciar Supabase',
+      authTone:'err',
+      authDetail:'Cliente nao inicializado.',
+      lastAction:'Falha ao criar cliente Supabase'
+    });
+    setDiagnosticError(_ex,'Supabase');
     showAuth();
     syncConfigUi();
     setConfigStatus('Nao foi possivel iniciar o Supabase com essa configuracao.','err');
@@ -147,21 +197,53 @@ async function ensureActiveSession(){
   const now=Date.now();
   if(S.user && S.sessionCheckedAt && (now - S.sessionCheckedAt) < SESSION_RECHECK_MS) return true;
   try{
+    setDiagnostic({
+      auth:'Revalidando sessao',
+      authTone:'',
+      authDetail:S.user?.email || 'Verificando token local',
+      lastAction:'Conferindo sessao ativa'
+    });
     const { data, error } = await withTimeout(db.auth.getSession(),2500,'sessao atual');
     if(error) throw error;
     if(data?.session?.user){
       S.user=data.session.user;
       S.sessionCheckedAt=Date.now();
+      setDiagnostic({
+        auth:'Sessao ok',
+        authTone:'ok',
+        authDetail:data.session.user?.email || data.session.user?.id || 'Usuario autenticado',
+        lastAction:'Sessao revalidada com sucesso'
+      });
       return true;
     }
+    setDiagnostic({
+      auth:'Renovando sessao',
+      authTone:'',
+      authDetail:S.user?.email || 'Tentando renovar token',
+      lastAction:'Tentando renovar a sessao'
+    });
     const refreshed=await withTimeout(db.auth.refreshSession(),4000,'renovacao da sessao');
     if(refreshed?.error) throw refreshed.error;
     if(refreshed?.data?.session?.user){
       S.user=refreshed.data.session.user;
       S.sessionCheckedAt=Date.now();
+      setDiagnostic({
+        auth:'Sessao ok',
+        authTone:'ok',
+        authDetail:refreshed.data.session.user?.email || refreshed.data.session.user?.id || 'Usuario autenticado',
+        lastAction:'Sessao renovada com sucesso'
+      });
       return true;
     }
-  }catch{}
+  }catch(ex){
+    setDiagnostic({
+      auth:'Sessao perdida',
+      authTone:'err',
+      authDetail:'Nao foi possivel validar a sessao atual.',
+      lastAction:'Falha ao revalidar ou renovar a sessao'
+    });
+    setDiagnosticError(ex,'Sessao');
+  }
   S.user=null;
   S.sessionCheckedAt=0;
   showAuth();
@@ -898,6 +980,72 @@ function setupParcelamentos(){
   syncParcelamentoResumo();
 }
 
+function diagText(value,fallback='--'){
+  const text=String(value ?? '').replace(/\s+/g,' ').trim();
+  return text || fallback;
+}
+
+function diagTimeLabel(value){
+  if(!value) return 'Sem eventos ainda';
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime())) return 'Sem eventos ainda';
+  return `Atualizado ${date.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+}
+
+function setDiagnostic(patch={},options={}){
+  S.diag={...S.diag,...patch};
+  if(!options.keepTime) S.diag.updatedAt=new Date().toISOString();
+  renderDiagnostic();
+}
+
+function setDiagnosticError(error,context=''){
+  const message=diagText(error?.message || error,'Sem erro detalhado');
+  setDiagnostic({lastError:context?`${context}: ${message}`:message});
+}
+
+function setDiagnosticVisible(visible){
+  S.diag.visible=Boolean(visible);
+  try{
+    localStorage.setItem(DIAGNOSTIC_VISIBLE_KEY,S.diag.visible?'1':'0');
+  }catch{}
+  renderDiagnostic();
+}
+
+function renderDiagnostic(){
+  const panel=q('diag-panel');
+  const toggle=q('diag-toggle');
+  if(!panel || !toggle) return;
+  panel.classList.toggle('show',S.diag.visible);
+  toggle.classList.toggle('hidden',S.diag.visible);
+  q('diag-auth').textContent=diagText(S.diag.auth);
+  q('diag-auth').className=`diag-value${S.diag.authTone?` ${S.diag.authTone}`:''}`;
+  q('diag-auth-detail').textContent=diagText(S.diag.authDetail);
+  q('diag-summary').textContent=diagText(S.diag.summary);
+  q('diag-summary').className=`diag-value${S.diag.summaryTone?` ${S.diag.summaryTone}`:''}`;
+  q('diag-list').textContent=diagText(S.diag.list);
+  q('diag-list').className=`diag-value${S.diag.listTone?` ${S.diag.listTone}`:''}`;
+  q('diag-user').textContent=diagText(S.user?.email || S.user?.id || 'Sem usuario autenticado');
+  q('diag-last-action').textContent=diagText(S.diag.lastAction);
+  q('diag-last-error').textContent=diagText(S.diag.lastError,'Nenhum erro registrado');
+  q('diag-updated').textContent=diagTimeLabel(S.diag.updatedAt);
+}
+
+function initDiagnosticMode(){
+  if(q('diag-toggle')) q('diag-toggle').addEventListener('click',()=>setDiagnosticVisible(true));
+  if(q('diag-close')) q('diag-close').addEventListener('click',()=>setDiagnosticVisible(false));
+  setDiagnostic({
+    auth:hasEmbeddedConfig()?'Aguardando autenticacao':'Aguardando configuracao',
+    authTone:'',
+    authDetail:hasEmbeddedConfig()?'Supabase sera inicializado automaticamente.':'Preencha a configuracao para iniciar.',
+    summary:'Aguardando primeira leitura',
+    summaryTone:'',
+    list:'Aguardando primeira lista',
+    listTone:'',
+    lastAction:'App aberto',
+    lastError:'Nenhum erro registrado'
+  });
+}
+
 q('form-auth').addEventListener('submit',async e=>{
   e.preventDefault();
   const email=q('inp-email').value.trim(), pwd=q('inp-senha').value;
@@ -905,21 +1053,52 @@ q('form-auth').addEventListener('submit',async e=>{
   if(!db){
     err.style.color='#C0392B';
     err.textContent='A configuracao do app ainda nao foi concluida.';
+    setDiagnostic({
+      auth:'Supabase indisponivel',
+      authTone:'err',
+      authDetail:'O cliente ainda nao foi inicializado.',
+      lastAction:'Tentativa de login sem conexao pronta'
+    });
     return;
   }
   btn.disabled=true;btn.textContent='...';err.textContent='';
+  setDiagnostic({
+    auth:authMode==='login'?'Entrando...':'Criando conta...',
+    authTone:'',
+    authDetail:email || 'Sem e-mail informado',
+    lastAction:authMode==='login'?'Tentando login':'Tentando criar conta'
+  });
   try{
     let res;
     if(authMode==='register'){
       res=await db.auth.signUp({email,password:pwd});
       if(res.error)throw res.error;
       err.style.color='var(--sage-dk)';err.textContent='Conta criada! Verifique seu e-mail.';
+      setDiagnostic({
+        auth:'Cadastro enviado',
+        authTone:'ok',
+        authDetail:email || 'Confira seu e-mail para confirmar a conta.',
+        lastAction:'Conta criada no Supabase'
+      });
     }else{
       res=await db.auth.signInWithPassword({email,password:pwd});
       if(res.error)throw res.error;
+      setDiagnostic({
+        auth:'Login aceito',
+        authTone:'ok',
+        authDetail:email || 'Aguardando confirmacao da sessao',
+        lastAction:'Login aceito; aguardando sessao'
+      });
     }
   }catch(ex){
     err.style.color='#C0392B';err.textContent=traduzErro(ex.message);
+    setDiagnostic({
+      auth:authMode==='login'?'Falha no login':'Falha no cadastro',
+      authTone:'err',
+      authDetail:email || 'Sem e-mail informado',
+      lastAction:authMode==='login'?'Login recusado':'Cadastro recusado'
+    });
+    setDiagnosticError(ex,authMode==='login'?'Login':'Cadastro');
   }finally{
     btn.disabled=false;
     btn.textContent=authMode==='login'?'Entrar':'Criar conta';
@@ -935,7 +1114,22 @@ q('btn-toggle-mode').addEventListener('click',()=>{
 
 const logout=()=>db.auth.signOut().then(()=>{
   S.user=null;
+  S.sessionCheckedAt=0;
+  setDiagnostic({
+    auth:'Sessao encerrada',
+    authTone:'',
+    authDetail:'Login necessario para continuar.',
+    lastAction:'Logout concluido'
+  });
   showAuth();
+}).catch(ex=>{
+  setDiagnostic({
+    auth:'Falha no logout',
+    authTone:'err',
+    authDetail:'A sessao local nao foi encerrada corretamente.',
+    lastAction:'Tentativa de logout com erro'
+  });
+  setDiagnosticError(ex,'Logout');
 });
 q('btn-logout').addEventListener('click',logout);
 q('btn-logout-2').addEventListener('click',logout);
@@ -1275,13 +1469,26 @@ async function deleteLinkedLancamentos(legacyId){
 }
 
 async function salvarGasto(){
-  if(!db || !(await ensureActiveSession())){toast('Entre novamente para salvar o gasto.','err');return;}
+  if(!db || !(await ensureActiveSession())){
+    setDiagnostic({
+      lastAction:'Tentativa de salvar gasto sem sessao',
+      auth:'Sessao necessaria',
+      authTone:'err',
+      authDetail:'Entre novamente para salvar gastos.'
+    });
+    toast('Entre novamente para salvar o gasto.','err');
+    return;
+  }
   if(!S.gastoCents){toast('Digite o valor','err');return;}
   const isEu=S.owner==='eu',sub=isEu?getSubFinal():null,isCustom=isEu&&q('sel-sub').value==='__outros__';
   if(isEu&&!S.catId){toast('Selecione uma categoria','err');return;}
   const btn=q('btn-salvar-gasto');
   btn.disabled=true;
   btn.textContent='Salvando...';
+  setDiagnostic({
+    lastAction:'Salvando gasto',
+    lastError:'Nenhum erro registrado'
+  });
   try{
     let lancamentoWarning=false;
     if(isCustom&&sub)await persistCustomSub(S.catId,sub);
@@ -1312,10 +1519,15 @@ async function salvarGasto(){
       enqueueOffline('gastos',gasto);
     }
     localStorage.setItem('gPresets',JSON.stringify({forma:q('sel-forma').value,banco:q('sel-banco').value}));
+    setDiagnostic({
+      lastAction:lancamentoWarning?'Gasto salvo com alerta de sincronizacao':'Gasto salvo com sucesso'
+    });
     toast(lancamentoWarning?'Gasto salvo, mas o resumo nao foi atualizado.':'Gasto salvo!',lancamentoWarning?'err':'ok');
     resetGastos();
     refreshDashboardIfVisible();
   }catch(ex){
+    setDiagnostic({lastAction:'Falha ao salvar gasto'});
+    setDiagnosticError(ex,'Salvar gasto');
     toast(`Nao foi possivel salvar o gasto.${ex?.message?` ${ex.message}`:''}`,'err');
   }finally{
     btn.disabled=false;
@@ -1350,7 +1562,15 @@ function setupEntradas(){
 }
 
 async function salvarParcelamentoAtivo(){
-  if(!db || !(await ensureActiveSession())){toast('Entre novamente para salvar parcelamentos.','err');return;}
+  if(!db || !(await ensureActiveSession())){
+    setDiagnostic({
+      list:'Sem sessao para salvar parcelamentos',
+      listTone:'err',
+      lastAction:'Tentativa de salvar parcelamento sem sessao'
+    });
+    toast('Entre novamente para salvar parcelamentos.','err');
+    return;
+  }
   const descricao=q('parc-descricao').value.trim();
   const proprietario=q('parc-owner').value;
   const contexto=q('parc-contexto').value;
@@ -1376,6 +1596,10 @@ async function salvarParcelamentoAtivo(){
   const btn=q('btn-salvar-parcelamento-ativo');
   btn.disabled=true;
   btn.textContent='Salvando...';
+  setDiagnostic({
+    lastAction:'Salvando parcelamento ativo',
+    lastError:'Nenhum erro registrado'
+  });
   try{
     const observacoes=cartao?`Cartao/referencia: ${cartao}`:null;
     const { error } = await withTimeout(
@@ -1398,10 +1622,13 @@ async function salvarParcelamentoAtivo(){
       'parcelamentos'
     );
     if(error) throw error;
+    setDiagnostic({lastAction:'Parcelamento ativo salvo com sucesso'});
     toast('Parcelamento ativo salvo!','ok');
     resetParcelamentoAtivo();
   }catch(ex){
     const msg=ex?.message||'';
+    setDiagnostic({lastAction:'Falha ao salvar parcelamento ativo'});
+    setDiagnosticError(ex,'Salvar parcelamento');
     if(msg.includes('criar_parcelamento_ativo_existente')){
       toast('Rode antes o SQL complementar de parcelamentos ativos no Supabase.','err');
     }else{
@@ -1414,12 +1641,25 @@ async function salvarParcelamentoAtivo(){
 }
 
 async function salvarEntrada(){
-  if(!db || !(await ensureActiveSession())){toast('Entre novamente para salvar a entrada.','err');return;}
+  if(!db || !(await ensureActiveSession())){
+    setDiagnostic({
+      lastAction:'Tentativa de salvar entrada sem sessao',
+      auth:'Sessao necessaria',
+      authTone:'err',
+      authDetail:'Entre novamente para salvar entradas.'
+    });
+    toast('Entre novamente para salvar a entrada.','err');
+    return;
+  }
   if(!S.entradaCents){toast('Digite o valor','err');return;}
   const origem=q('sel-origem').value;
   const btn=q('btn-salvar-entrada');
   btn.disabled=true;
   btn.textContent='Salvando...';
+  setDiagnostic({
+    lastAction:'Salvando entrada',
+    lastError:'Nenhum erro registrado'
+  });
   try{
     let lancamentoWarning=false;
     const legacyId=newUuid();
@@ -1445,10 +1685,15 @@ async function salvarEntrada(){
     }else{
       enqueueOffline('entradas',entrada);
     }
+    setDiagnostic({
+      lastAction:lancamentoWarning?'Entrada salva com alerta de sincronizacao':'Entrada salva com sucesso'
+    });
     toast(lancamentoWarning?'Entrada salva, mas o resumo nao foi atualizado.':'Entrada salva!',lancamentoWarning?'err':'ok');
     resetEntradas();
     refreshDashboardIfVisible();
   }catch(ex){
+    setDiagnostic({lastAction:'Falha ao salvar entrada'});
+    setDiagnosticError(ex,'Salvar entrada');
     toast(`Nao foi possivel salvar a entrada.${ex?.message?` ${ex.message}`:''}`,'err');
   }finally{
     btn.disabled=false;
@@ -1914,10 +2159,20 @@ async function refreshDashboard(){
   if(!db || !(await ensureActiveSession())){
     statusEl.textContent='Entre no app para carregar o resumo.';
     statusEl.className='dashboard-status err';
+    setDiagnostic({
+      summary:'Sem sessao para carregar resumo',
+      summaryTone:'err',
+      lastAction:'Resumo bloqueado por falta de sessao'
+    });
     return;
   }
   statusEl.textContent='Atualizando resumo...';
   statusEl.className='dashboard-status';
+  setDiagnostic({
+    summary:'Atualizando via Supabase...',
+    summaryTone:'',
+    lastAction:'Atualizando resumo'
+  });
   const now=new Date();
   const from=new Date(now.getFullYear(),now.getMonth()-5,1);
   const fromKey=`${from.getFullYear()}-${String(from.getMonth()+1).padStart(2,'0')}-01`;
@@ -1934,6 +2189,11 @@ async function refreshDashboard(){
     );
     statusEl.textContent='Mostrando o ultimo resumo salvo neste dispositivo enquanto atualizamos.';
     statusEl.className='dashboard-status';
+    setDiagnostic({
+      summary:'Cache local (provisorio)',
+      summaryTone:'',
+      lastAction:'Resumo aberto a partir do cache local'
+    });
   }
   try{
     const casaConfig=S.casaAtualConfig || getCasaAtualConfig();
@@ -2030,6 +2290,15 @@ async function refreshDashboard(){
       aggregateCasaAtual(casaRows,casaConfig,monthKeys),
       casaConfig
     );
+    const baseSource=(!baseRes.error && (baseRes.data||[]).length)
+      ? 'Supabase / lancamentos'
+      : 'Supabase / legado';
+    const originSuffix=!originRes.error ? ' + origem temporal' : ' + sem origem temporal';
+    setDiagnostic({
+      summary:`${baseSource}${originSuffix}`,
+      summaryTone:'ok',
+      lastAction:'Resumo atualizado do Supabase'
+    });
     writeCache(DASHBOARD_CACHE_KEY,{
       dashboardRows,
       originRows,
@@ -2050,10 +2319,22 @@ async function refreshDashboard(){
       );
       statusEl.textContent='Mostrando o ultimo resumo salvo neste dispositivo.';
       statusEl.className='dashboard-status err';
+      setDiagnostic({
+        summary:'Cache local (fallback)',
+        summaryTone:'err',
+        lastAction:'Resumo exibido do cache apos falha remota'
+      });
+      setDiagnosticError(ex,'Resumo');
       return;
     }
     statusEl.textContent='Nao foi possivel carregar o dashboard.';
     statusEl.className='dashboard-status err';
+    setDiagnostic({
+      summary:'Falha ao carregar resumo',
+      summaryTone:'err',
+      lastAction:'Resumo indisponivel'
+    });
+    setDiagnosticError(ex,'Resumo');
     renderCasaAtualPanel(
       aggregateCasaAtual([],S.casaAtualConfig || getCasaAtualConfig(),monthKeys),
       S.casaAtualConfig || getCasaAtualConfig()
@@ -2246,6 +2527,11 @@ function openDetail(rec,tab){
 
 async function openListFast(tab){
   if(!db || !(await ensureActiveSession())){
+    setDiagnostic({
+      list:'Sem sessao para abrir listas',
+      listTone:'err',
+      lastAction:`Tentativa de abrir ${tab} sem sessao`
+    });
     toast('Entre novamente para abrir seus registros.','err');
     return;
   }
@@ -2256,12 +2542,20 @@ async function openListFast(tab){
   q('list-overlay').classList.add('show');
   q('list-sheet').classList.add('show');
 
-  if(cached.length) renderListRecords(listEl,cached,tab);
+  if(cached.length){
+    renderListRecords(listEl,cached,tab);
+    setDiagnostic({
+      list:`${tab==='gastos'?'Gastos':'Entradas'} / cache local`,
+      listTone:'',
+      lastAction:`Abrindo ${tab} a partir do cache`
+    });
+  }
   else listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Carregando...</p></div>';
 
   try{
     let items=[];
     let error=null;
+    let sourceLabel='';
     if(tab==='gastos'){
       const [legacy,modern]=await Promise.allSettled([
         withTimeout(
@@ -2288,6 +2582,9 @@ async function openListFast(tab){
       if((error || !items.length) && !modernRes.error && (modernRes.data||[]).length){
         items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
         error=null;
+        sourceLabel='Supabase / gastos via lancamentos';
+      }else{
+        sourceLabel='Supabase / gastos legado';
       }
       if(items.length) writeCache(GASTOS_CACHE_KEY,items);
     }else{
@@ -2316,17 +2613,37 @@ async function openListFast(tab){
       if((error || !items.length) && !modernRes.error && (modernRes.data||[]).length){
         items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
         error=null;
+        sourceLabel='Supabase / entradas via lancamentos';
+      }else{
+        sourceLabel='Supabase / entradas legado';
       }
       if(items.length) writeCache(ENTRADAS_CACHE_KEY,items);
     }
     if(error) throw error;
+    setDiagnostic({
+      list:sourceLabel || `Supabase / ${tab}`,
+      listTone:'ok',
+      lastAction:`Lista de ${tab} atualizada do Supabase`
+    });
     renderListRecords(listEl,items,tab);
   }catch(ex){
     if(cached.length){
       renderListRecords(listEl,cached,tab);
+      setDiagnostic({
+        list:`${tab==='gastos'?'Gastos':'Entradas'} / cache fallback`,
+        listTone:'err',
+        lastAction:`Lista de ${tab} exibida do cache apos falha remota`
+      });
+      setDiagnosticError(ex,`Lista de ${tab}`);
       toast('Mostrando os ultimos registros salvos neste dispositivo.','err');
       return;
     }
+    setDiagnostic({
+      list:`Falha ao carregar ${tab}`,
+      listTone:'err',
+      lastAction:`Lista de ${tab} indisponivel`
+    });
+    setDiagnosticError(ex,`Lista de ${tab}`);
     listEl.innerHTML=`<div class="empty-state"><div class="empty-state-icon">!</div><p>Erro ao carregar registros.</p><p style="font-size:12px">${ex?.message||''}</p></div>`;
   }
 }
@@ -2356,7 +2673,16 @@ function closeEditGasto(){
 async function saveEditedGasto(){
   const rec=S.detailRecord;
   if(!rec || S.detailTab!=='gastos') return;
-  if(!db || !(await ensureActiveSession())){toast('Entre novamente para editar o gasto.','err');return;}
+  if(!db || !(await ensureActiveSession())){
+    setDiagnostic({
+      lastAction:'Tentativa de editar gasto sem sessao',
+      auth:'Sessao necessaria',
+      authTone:'err',
+      authDetail:'Entre novamente para editar gastos.'
+    });
+    toast('Entre novamente para editar o gasto.','err');
+    return;
+  }
   const btn=q('edit-save');
   btn.disabled=true;
   btn.textContent='Salvando...';
@@ -2368,6 +2694,10 @@ async function saveEditedGasto(){
     necessidade:q('edit-gasto-necessidade').value ? Number(q('edit-gasto-necessidade').value) : null,
   };
   try{
+    setDiagnostic({
+      lastAction:'Salvando alteracoes do gasto',
+      lastError:'Nenhum erro registrado'
+    });
     const { error } = await db.from('gastos').update(updated).eq('user_id',S.user.id).eq('id',rec.id);
     if(error) throw error;
     const merged={...rec,...updated};
@@ -2375,9 +2705,12 @@ async function saveEditedGasto(){
     S.detailRecord=merged;
     closeEditGasto();
     q('detail-overlay').classList.remove('show');
+    setDiagnostic({lastAction:'Gasto atualizado com sucesso'});
     toast('Gasto atualizado!','ok');
     refreshDashboardIfVisible();
   }catch(ex){
+    setDiagnostic({lastAction:'Falha ao atualizar gasto'});
+    setDiagnosticError(ex,'Editar gasto');
     toast(`Nao foi possivel atualizar o gasto.${ex?.message?` ${ex.message}`:''}`,'err');
   }finally{
     btn.disabled=false;
@@ -2389,10 +2722,23 @@ async function deleteCurrentRecord(){
   const rec=S.detailRecord;
   const tab=S.detailTab;
   if(!rec || !tab) return;
-  if(!db || !(await ensureActiveSession())){toast('Entre novamente para excluir o registro.','err');return;}
+  if(!db || !(await ensureActiveSession())){
+    setDiagnostic({
+      lastAction:'Tentativa de excluir registro sem sessao',
+      auth:'Sessao necessaria',
+      authTone:'err',
+      authDetail:'Entre novamente para excluir registros.'
+    });
+    toast('Entre novamente para excluir o registro.','err');
+    return;
+  }
   const label=tab==='gastos'?'gasto':'entrada';
   if(!confirm(`Deseja excluir este ${label}?`)) return;
   try{
+    setDiagnostic({
+      lastAction:`Excluindo ${label}`,
+      lastError:'Nenhum erro registrado'
+    });
     if(tab==='gastos'){
       const { error } = await db.from('gastos').delete().eq('user_id',S.user.id).eq('id',rec.id);
       if(error) throw error;
@@ -2404,9 +2750,12 @@ async function deleteCurrentRecord(){
     }
     q('detail-overlay').classList.remove('show');
     closeList();
+    setDiagnostic({lastAction:`${tab==='gastos'?'Gasto':'Entrada'} excluido com sucesso`});
     toast(`${tab==='gastos'?'Gasto':'Entrada'} excluido!`,'ok');
     refreshDashboardIfVisible();
   }catch(ex){
+    setDiagnostic({lastAction:`Falha ao excluir ${label}`});
+    setDiagnosticError(ex,`Excluir ${label}`);
     toast(`Nao foi possivel excluir o registro.${ex?.message?` ${ex.message}`:''}`,'err');
   }
 }

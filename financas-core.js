@@ -7,6 +7,7 @@ const GASTOS_CACHE_KEY = 'dindin_gastos_cache';
 const ENTRADAS_CACHE_KEY = 'dindin_entradas_cache';
 const CASA_ATUAL_CONFIG_KEY = 'dindin_casa_atual_config';
 const ALYA_CACHE_KEY = 'dindin_alya_cache';
+const DIAGNOSTIC_VISIBLE_KEY = 'dindin_diag_visible';
 const SESSION_RECHECK_MS = 30000;
 const EMBEDDED_SUPABASE_CONFIG = Object.freeze({
   url: 'https://beqzurjtawlbloorbijz.supabase.co',
@@ -45,6 +46,19 @@ const S = {
   user:null,owner:'eu',gastoCents:0,entradaCents:0,
   parcela:'a_vista',necessidade:null,catId:null,
   sessionCheckedAt:0,
+  diag:{
+    visible:(localStorage.getItem(DIAGNOSTIC_VISIBLE_KEY) ?? '1') !== '0',
+    auth:'Aguardando inicializacao',
+    authTone:'',
+    authDetail:'Sem sessao carregada ainda.',
+    summary:'Aguardando primeira leitura',
+    summaryTone:'',
+    list:'Aguardando primeira lista',
+    listTone:'',
+    lastAction:'Abrindo app',
+    lastError:'Nenhum erro registrado',
+    updatedAt:null,
+  },
   customSubs:JSON.parse(localStorage.getItem('customSubs')||'{}'),
   offlineQ:JSON.parse(localStorage.getItem('offlineQ')||'[]'),
 };
