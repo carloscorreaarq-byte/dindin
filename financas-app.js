@@ -64,22 +64,61 @@ function syncConfigUi(){
   if(authSub) authSub.textContent=hasEmbeddedConfig()?'Seu dinheiro, organizado com calma.':'Controle pessoal';
 }
 
+async function hydrateAuthenticatedState(session,source='sessao'){
+  const user=session?.user;
+  if(!user){
+    S.user=null;
+    S.sessionCheckedAt=0;
+    showAuth();
+    return;
+  }
+
+  const now=Date.now();
+  S.user=user;
+  S.sessionCheckedAt=now;
+  setDiagnostic({
+    auth:'Sessao ok',
+    authTone:'ok',
+    authDetail:user.email || user.id || 'Usuario autenticado',
+    lastAction:source==='boot'?'Sessao carregada ao abrir o app':'Sessao confirmada pelo Supabase'
+  });
+  showApp();
+
+  if(S.sessionHydrationPromise && S.hydratingUserId===user.id){
+    return S.sessionHydrationPromise;
+  }
+
+  if(S.lastHydratedUserId===user.id && (now - (S.lastHydratedAt||0)) < 1500){
+    refreshDashboardIfVisible('post-auth');
+    return;
+  }
+
+  const task=(async ()=>{
+    await Promise.allSettled([
+      loadCustomSubs(),
+      loadCasaAtualConfig()
+    ]);
+    S.lastHydratedUserId=user.id;
+    S.lastHydratedAt=Date.now();
+    refreshDashboardIfVisible('post-auth');
+  })();
+
+  S.hydratingUserId=user.id;
+  S.sessionHydrationPromise=task;
+
+  try{
+    await task;
+  }finally{
+    if(S.hydratingUserId===user.id) S.hydratingUserId=null;
+    if(S.sessionHydrationPromise===task) S.sessionHydrationPromise=null;
+  }
+}
+
 function bindAuthListener(){
   if(authListenerBound || !db) return;
   db.auth.onAuthStateChange(async (_e,session)=>{
     if(session){
-      S.user=session.user;
-      S.sessionCheckedAt=Date.now();
-      setDiagnostic({
-        auth:'Sessao ok',
-        authTone:'ok',
-        authDetail:session.user?.email || session.user?.id || 'Usuario autenticado',
-        lastAction:'Sessao confirmada pelo Supabase'
-      });
-      showApp();
-      await loadCustomSubs();
-      await loadCasaAtualConfig();
-      refreshDashboardIfVisible();
+      await hydrateAuthenticatedState(session,'auth');
     }else{
       S.user=null;
       S.sessionCheckedAt=0;
@@ -134,18 +173,7 @@ async function bootSupabase(){
     bindAuthListener();
     const {data:{session}}=await db.auth.getSession();
     if(session){
-      S.user=session.user;
-      S.sessionCheckedAt=Date.now();
-      setDiagnostic({
-        auth:'Sessao ok',
-        authTone:'ok',
-        authDetail:session.user?.email || session.user?.id || 'Usuario autenticado',
-        lastAction:'Sessao carregada ao abrir o app'
-      });
-      showApp();
-      await loadCustomSubs();
-      await loadCasaAtualConfig();
-      refreshDashboardIfVisible();
+      await hydrateAuthenticatedState(session,'boot');
     }else{
       setDiagnostic({
         auth:'Sem sessao ativa',
@@ -187,7 +215,7 @@ function setupConfig(){
 }
 
 function setupDashboard(){
-  q('btn-dashboard-refresh').addEventListener('click',()=>refreshDashboard());
+  q('btn-dashboard-refresh').addEventListener('click',()=>refreshDashboard('manual'));
   setupCasaAtual();
   setupAlya();
 }
@@ -1071,6 +1099,14 @@ function initDiagnosticMode(){
   });
 }
 
+function scheduleDashboardRefresh(reason='auto',delay=180){
+  if(S.dashboardRefreshTimer) clearTimeout(S.dashboardRefreshTimer);
+  S.dashboardRefreshTimer=setTimeout(()=>{
+    S.dashboardRefreshTimer=null;
+    refreshDashboard(reason);
+  },delay);
+}
+
 q('form-auth').addEventListener('submit',async e=>{
   e.preventDefault();
   const email=q('inp-email').value.trim(), pwd=q('inp-senha').value;
@@ -1181,7 +1217,7 @@ function setupNav(){
     btn.addEventListener('click',()=>{
       if(btn.classList.contains('active')){
         if(tabSupportsList(btn.dataset.tab)) openListFast(btn.dataset.tab);
-        else if(btn.dataset.tab==='dashboard') refreshDashboard();
+        else if(btn.dataset.tab==='dashboard') refreshDashboard('manual');
         else if(btn.dataset.tab==='investimentos') refreshAlyaDashboard();
         return;
       }
@@ -1189,7 +1225,7 @@ function setupNav(){
       document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
       btn.classList.add('active');
       q(`tab-${btn.dataset.tab}`).classList.add('active');
-      if(btn.dataset.tab==='dashboard') refreshDashboard();
+      if(btn.dataset.tab==='dashboard') refreshDashboard('manual');
       if(btn.dataset.tab==='investimentos') refreshAlyaDashboard();
     });
   });
@@ -2251,7 +2287,13 @@ function renderDashboard(data,originData={}){
   renderBarList('dashboard-needs',needItems,'sage');
 }
 
-async function refreshDashboard(){
+async function refreshDashboard(reason='auto'){
+  if(S.dashboardRefreshPromise){
+    S.dashboardRefreshQueued=true;
+    return S.dashboardRefreshPromise;
+  }
+
+  const task=(async ()=>{
   const statusEl=q('dashboard-status');
   if(!statusEl) return;
   if(!db || !(await ensureActiveSession())){
@@ -2462,14 +2504,29 @@ async function refreshDashboard(){
       S.casaAtualConfig || getCasaAtualConfig()
     );
   }
+  })();
+
+  S.dashboardRefreshPromise=task;
+  try{
+    return await task;
+  }finally{
+    S.dashboardRefreshPromise=null;
+    if(S.dashboardRefreshQueued){
+      S.dashboardRefreshQueued=false;
+      if(q('tab-dashboard')?.classList.contains('active')){
+        scheduleDashboardRefresh(reason,120);
+      }
+    }
+  }
 }
 
-function refreshDashboardIfVisible(){
+function refreshDashboardIfVisible(reason='auto'){
   const tab=q('tab-dashboard');
-  if(tab && tab.classList.contains('active')) refreshDashboard();
+  if(tab && tab.classList.contains('active')) scheduleDashboardRefresh(reason);
 }
 
 async function openList(tab){
+  return openListFast(tab);
   if(!db || !(await ensureActiveSession())){
     toast('Entre novamente para abrir seus registros.','err');
     return;
@@ -2675,6 +2732,16 @@ async function openListFast(tab){
   }
   else listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Carregando...</p></div>';
 
+  if(S.listRequests[tab]){
+    setDiagnostic({
+      list:`${tab==='gastos'?'Gastos':'Entradas'} / aguardando resposta em andamento`,
+      listTone:'',
+      lastAction:`Reaproveitando consulta ja aberta para ${tab}`
+    });
+    return S.listRequests[tab];
+  }
+
+  const request=(async ()=>{
   try{
     let items=[];
     let error=null;
@@ -2762,6 +2829,14 @@ async function openListFast(tab){
     });
     setDiagnosticError(ex,`Lista de ${tab}`);
     listEl.innerHTML=`<div class="empty-state"><div class="empty-state-icon">!</div><p>Erro ao carregar registros.</p><p style="font-size:12px">${ex?.message||''}</p></div>`;
+  }
+  })();
+
+  S.listRequests[tab]=request;
+  try{
+    return await request;
+  }finally{
+    if(S.listRequests[tab]===request) S.listRequests[tab]=null;
   }
 }
 
