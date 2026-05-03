@@ -116,10 +116,22 @@ async function hydrateAuthenticatedState(session,source='sessao'){
 
 function bindAuthListener(){
   if(authListenerBound || !db) return;
-  db.auth.onAuthStateChange(async (_e,session)=>{
+  db.auth.onAuthStateChange(async (event,session)=>{
     if(session){
       await hydrateAuthenticatedState(session,'auth');
-    }else{
+    }else if(event==='SIGNED_OUT'){
+      // Antes de deslogar, verifica se nao e apenas uma falha transitoria do refresh automatico.
+      // No celular, o token pode falhar ao renovar ao trocar de rede — aguarda 4s e confirma.
+      if(S.user && S.sessionCheckedAt && (Date.now()-S.sessionCheckedAt)<90000){
+        await new Promise(r=>setTimeout(r,4000));
+        try{
+          const {data}=await db.auth.getSession();
+          if(data?.session?.user){
+            await hydrateAuthenticatedState(data.session,'auth');
+            return;
+          }
+        }catch(_){}
+      }
       S.user=null;
       S.sessionCheckedAt=0;
       setDiagnostic({
@@ -135,6 +147,8 @@ function bindAuthListener(){
       });
       showAuth();
     }
+    // Outros eventos com session=null (TOKEN_REFRESHED, INITIAL_SESSION, USER_UPDATED, etc.)
+    // sao transitórios durante o ciclo de refresh — nao deslogar o usuario.
   });
   authListenerBound=true;
 }
@@ -274,6 +288,18 @@ async function ensureActiveSession(){
       setDiagnosticError(ex,'Sessao');
       return true;
     }
+    // Erro de rede (nao timeout): se o usuario estava ativo nos ultimos 5 min, manter sessao local.
+    // Comum em mobile ao trocar de rede (WiFi → 4G) ou com tab em background.
+    if(S.user && S.sessionCheckedAt && (Date.now()-S.sessionCheckedAt)<300000){
+      setDiagnostic({
+        auth:'Sessao mantida localmente',
+        authTone:'',
+        authDetail:S.user?.email || 'Falha de rede; sessao local sera mantida temporariamente.',
+        lastAction:'Erro de rede na validacao; mantendo sessao local'
+      });
+      setDiagnosticError(ex,'Sessao');
+      return true;
+    }
     setDiagnostic({
       auth:'Sessao perdida',
       authTone:'err',
@@ -281,6 +307,17 @@ async function ensureActiveSession(){
       lastAction:'Falha ao revalidar ou renovar a sessao'
     });
     setDiagnosticError(ex,'Sessao');
+  }
+  // getSession/refreshSession retornaram sem sessao e sem erro (ex.: resposta vazia por rede ruim).
+  // Se o usuario estava ativo nos ultimos 5 min, manter sessao local em vez de deslogar.
+  if(S.user && S.sessionCheckedAt && (Date.now()-S.sessionCheckedAt)<300000){
+    setDiagnostic({
+      auth:'Sessao mantida localmente',
+      authTone:'',
+      authDetail:S.user?.email || 'Nao foi possivel confirmar sessao; mantendo localmente.',
+      lastAction:'Sessao nao confirmada pelo servidor; mantendo sessao local'
+    });
+    return true;
   }
   S.user=null;
   S.sessionCheckedAt=0;
