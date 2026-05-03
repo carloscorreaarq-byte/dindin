@@ -83,6 +83,7 @@ async function hydrateAuthenticatedState(session,source='sessao'){
     lastAction:source==='boot'?'Sessao carregada ao abrir o app':'Sessao confirmada pelo Supabase'
   });
   showApp();
+  updateSyncButton();
   // Sincroniza itens pendentes salvos localmente quando offline ou com rede lenta
   if(S.offlineQ.length) flushOfflineQueue().catch(()=>{});
 
@@ -230,8 +231,29 @@ function setupConfig(){
   });
 }
 
+function updateSyncButton(){
+  const btn=q('btn-sync-pending');
+  if(!btn) return;
+  if(S.offlineQ.length){
+    btn.style.display='';
+    btn.textContent=`↑ Sincronizar (${S.offlineQ.length})`;
+  }else{
+    btn.style.display='none';
+  }
+}
+
 function setupDashboard(){
   q('btn-dashboard-refresh').addEventListener('click',()=>refreshDashboard('manual'));
+  const syncBtn=q('btn-sync-pending');
+  if(syncBtn){
+    syncBtn.addEventListener('click',async ()=>{
+      syncBtn.disabled=true;
+      syncBtn.textContent='Sincronizando...';
+      await flushOfflineQueue();
+      updateSyncButton();
+      syncBtn.disabled=false;
+    });
+  }
   setupCasaAtual();
   setupAlya();
 }
@@ -1524,7 +1546,7 @@ async function insertLancamento(lancamento){
   if(!S.user || !db) return;
   const { error } = await withTimeout(
     db.from('lancamentos').insert(lancamento),
-    25000,
+    45000,
     'lancamentos'
   );
   if(error) throw error;
@@ -3028,11 +3050,13 @@ function closeList(){
 function enqueueOffline(tabela,dados){
   S.offlineQ.push({tabela,dados,ts:Date.now()});
   localStorage.setItem('offlineQ',JSON.stringify(S.offlineQ));
+  updateSyncButton();
 }
 
 async function flushOfflineQueue(){
   if(_flushRunning || !db || !S.user || !S.offlineQ.length) return;
   _flushRunning=true;
+  let lastFlushError=null;
   try{
     const pending=[...S.offlineQ];
     const synced=[];
@@ -3048,21 +3072,35 @@ async function flushOfflineQueue(){
           await insertLegacyEntradaBestEffort(d);
         }
         synced.push(item);
+        lastFlushError=null;
       }catch(ex){
+        lastFlushError=ex;
         // Chave duplicada (23505) = já existe no banco; considera sincronizado e continua
         if(String(ex?.code||'').includes('23505') || String(ex?.message||'').toLowerCase().includes('duplicate')){
           synced.push(item);
+          lastFlushError=null;
           continue;
         }
-        // Rede ainda ruim — para aqui e tenta novamente na próxima chamada
+        // Qualquer outro erro: expõe ao usuário e para (será tentado novamente depois)
+        setDiagnostic({
+          lastAction:'Falha ao sincronizar registro pendente',
+          lastError:`Sync: ${ex?.message || ex?.code || JSON.stringify(ex)}`
+        });
         break;
       }
     }
     if(synced.length){
       S.offlineQ=S.offlineQ.filter(i=>!synced.includes(i));
       localStorage.setItem('offlineQ',JSON.stringify(S.offlineQ));
+      updateSyncButton();
       setDiagnostic({lastAction:`${synced.length} registro(s) sincronizado(s) com o banco`});
-      if(!S.offlineQ.length) refreshDashboardIfVisible();
+      if(!S.offlineQ.length){
+        refreshDashboardIfVisible();
+      }
+    }
+    if(lastFlushError && S.offlineQ.length){
+      const msg=lastFlushError?.message || lastFlushError?.code || 'Erro desconhecido';
+      toast(`Sincronização pendente (${S.offlineQ.length} item${S.offlineQ.length>1?'s':''}). Erro: ${msg}`,'err');
     }
   }finally{
     _flushRunning=false;
