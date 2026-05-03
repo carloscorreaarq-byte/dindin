@@ -83,6 +83,8 @@ async function hydrateAuthenticatedState(session,source='sessao'){
     lastAction:source==='boot'?'Sessao carregada ao abrir o app':'Sessao confirmada pelo Supabase'
   });
   showApp();
+  // Sincroniza itens pendentes salvos localmente quando offline ou com rede lenta
+  if(S.offlineQ.length) flushOfflineQueue().catch(()=>{});
 
   if(S.sessionHydrationPromise && S.hydratingUserId===user.id){
     return S.sessionHydrationPromise;
@@ -1522,7 +1524,7 @@ async function insertLancamento(lancamento){
   if(!S.user || !db) return;
   const { error } = await withTimeout(
     db.from('lancamentos').insert(lancamento),
-    12000,
+    25000,
     'lancamentos'
   );
   if(error) throw error;
@@ -1642,29 +1644,14 @@ async function deleteLinkedLancamentos(legacyId){
 }
 
 async function salvarGasto(){
-  if(!db || !(await ensureActiveSession())){
-    setDiagnostic({
-      lastAction:'Tentativa de salvar gasto sem sessao',
-      auth:'Sessao necessaria',
-      authTone:'err',
-      authDetail:'Entre novamente para salvar gastos.'
-    });
-    toast('Entre novamente para salvar o gasto.','err');
-    return;
-  }
   if(!S.gastoCents){toast('Digite o valor','err');return;}
   const isEu=S.owner==='eu',sub=isEu?getSubFinal():null,isCustom=isEu&&q('sel-sub').value==='__outros__';
   if(isEu&&!S.catId){toast('Selecione uma categoria','err');return;}
   const btn=q('btn-salvar-gasto');
   btn.disabled=true;
   btn.textContent='Salvando...';
-  setDiagnostic({
-    lastAction:'Salvando gasto',
-    lastError:'Nenhum erro registrado'
-  });
   try{
-    let legacyMirrorWarning=false;
-    if(isCustom&&sub)await persistCustomSub(S.catId,sub);
+    if(isCustom&&sub) await persistCustomSub(S.catId,sub);
     const legacyId=newUuid();
     const gasto={
       id:legacyId,
@@ -1679,19 +1666,14 @@ async function salvarGasto(){
       subcategoria:sub,
       necessidade:isEu?S.necessidade:null
     };
-    if(S.user){
-      await insertLancamento(buildLancamentoFromGasto(gasto,legacyId));
-      const mirrored=await insertLegacyGastoBestEffort(gasto);
-      if(!mirrored) legacyMirrorWarning=true;
-    }else{
-      enqueueOffline('gastos',gasto);
-    }
+    // Salva localmente primeiro — resposta imediata, sem depender da rede
+    enqueueOffline('gastos',gasto);
     localStorage.setItem('gPresets',JSON.stringify({forma:q('sel-forma').value,banco:q('sel-banco').value}));
-    setDiagnostic({
-      lastAction:legacyMirrorWarning?'Gasto salvo via lancamentos; espelho legado pendente':'Gasto salvo com sucesso'
-    });
-    toast(legacyMirrorWarning?'Gasto salvo! O espelho antigo ficou pendente.':'Gasto salvo!',legacyMirrorWarning?'err':'ok');
+    setDiagnostic({lastAction:'Gasto registrado localmente; sincronizando...',lastError:'Nenhum erro registrado'});
+    toast('Gasto salvo!','ok');
     resetGastos();
+    // Sincroniza em background sem bloquear o formulário
+    if(db && S.user) flushOfflineQueue().catch(()=>{});
     refreshDashboardIfVisible();
   }catch(ex){
     setDiagnostic({lastAction:'Falha ao salvar gasto'});
@@ -1809,27 +1791,12 @@ async function salvarParcelamentoAtivo(){
 }
 
 async function salvarEntrada(){
-  if(!db || !(await ensureActiveSession())){
-    setDiagnostic({
-      lastAction:'Tentativa de salvar entrada sem sessao',
-      auth:'Sessao necessaria',
-      authTone:'err',
-      authDetail:'Entre novamente para salvar entradas.'
-    });
-    toast('Entre novamente para salvar a entrada.','err');
-    return;
-  }
   if(!S.entradaCents){toast('Digite o valor','err');return;}
   const origem=q('sel-origem').value;
   const btn=q('btn-salvar-entrada');
   btn.disabled=true;
   btn.textContent='Salvando...';
-  setDiagnostic({
-    lastAction:'Salvando entrada',
-    lastError:'Nenhum erro registrado'
-  });
   try{
-    let legacyMirrorWarning=false;
     const legacyId=newUuid();
     const entrada={
       id:legacyId,
@@ -1841,18 +1808,13 @@ async function salvarEntrada(){
       origem_especificacao:origem==='outro'?q('inp-origem-spec').value.trim():null,
       data:q('inp-data-entrada').value
     };
-    if(S.user){
-      await insertLancamento(buildLancamentoFromEntrada(entrada,legacyId));
-      const mirrored=await insertLegacyEntradaBestEffort(entrada);
-      if(!mirrored) legacyMirrorWarning=true;
-    }else{
-      enqueueOffline('entradas',entrada);
-    }
-    setDiagnostic({
-      lastAction:legacyMirrorWarning?'Entrada salva via lancamentos; espelho legado pendente':'Entrada salva com sucesso'
-    });
-    toast(legacyMirrorWarning?'Entrada salva! O espelho antigo ficou pendente.':'Entrada salva!',legacyMirrorWarning?'err':'ok');
+    // Salva localmente primeiro — resposta imediata, sem depender da rede
+    enqueueOffline('entradas',entrada);
+    setDiagnostic({lastAction:'Entrada registrada localmente; sincronizando...',lastError:'Nenhum erro registrado'});
+    toast('Entrada salva!','ok');
     resetEntradas();
+    // Sincroniza em background sem bloquear o formulário
+    if(db && S.user) flushOfflineQueue().catch(()=>{});
     refreshDashboardIfVisible();
   }catch(ex){
     setDiagnostic({lastAction:'Falha ao salvar entrada'});
@@ -2155,6 +2117,12 @@ function buildLegacyLikeRecordFromLancamento(row){
   };
 }
 
+function pendingOfflineItems(tab){
+  return S.offlineQ
+    .filter(i=>i.tabela===tab)
+    .map(i=>({...i.dados, _pending:true}));
+}
+
 function renderListRecords(listEl,items,tab){
   if(!items.length){
     listEl.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔍</div><p>Nenhum registro ainda</p></div>';
@@ -2162,7 +2130,7 @@ function renderListRecords(listEl,items,tab){
   }
   const groups={};
   items.forEach(item=>{
-    const rawDate=(item.data || item.created_at || '').slice(0,10);
+    const rawDate=(item.data || item.data_evento || item.created_at || '').slice(0,10);
     const d=rawDate || 'sem-data';
     if(!groups[d])groups[d]=[];
     groups[d].push(item);
@@ -2176,6 +2144,7 @@ function renderListRecords(listEl,items,tab){
     records.forEach(rec=>{
       const el=document.createElement('div');
       el.className='list-item';
+      if(rec._pending) el.style.opacity='0.65';
       const isG=tab==='gastos';
       const catId=isG?CATS.find(c=>c.nome===rec.categoria)?.id:null;
       const icon=isG?(CAT_ICONS[catId]||'💸'):'💰';
@@ -2186,14 +2155,15 @@ function renderListRecords(listEl,items,tab){
         ? (rec.dono==='mae'?'Minha Mae':rec.categoria||'')
         : (rec.origem_de||rec.origem_especificacao||(rec.origem ? origemLabel(rec.origem) : ''));
       const val='R$ '+Number(rec.valor).toLocaleString('pt-BR',{minimumFractionDigits:2});
+      const pendingBadge=rec._pending?'<span style="font-size:0.7em;color:#888;margin-left:4px">sincronizando...</span>':'';
       el.innerHTML=`
         <div class="list-item-icon ${isG?'terra':'sage'}">${icon}</div>
         <div class="list-item-info">
-          <div class="list-item-title">${title}</div>
+          <div class="list-item-title">${title}${pendingBadge}</div>
           ${sub?`<div class="list-item-sub">${sub}</div>`:''}
         </div>
         <div class="list-item-val ${isG?'neg':'pos'}">${val}</div>`;
-      el.addEventListener('click',()=>openDetail(rec,tab));
+      if(!rec._pending) el.addEventListener('click',()=>openDetail(rec,tab));
       listEl.appendChild(el);
     });
   });
@@ -2759,10 +2729,14 @@ async function openListFast(tab){
   q('list-overlay').classList.add('show');
   q('list-sheet').classList.add('show');
 
-  if(cached.length){
-    renderListRecords(listEl,cached,tab);
+  const pending=pendingOfflineItems(tab);
+  if(cached.length || pending.length){
+    // Pendentes primeiro (mais recentes) seguidos do cache do banco
+    const pendingIds=new Set(pending.map(p=>p.id));
+    const merged=[...pending,...cached.filter(c=>!pendingIds.has(c.id))];
+    renderListRecords(listEl,merged,tab);
     setDiagnostic({
-      list:`${tab==='gastos'?'Gastos':'Entradas'} / cache local`,
+      list:`${tab==='gastos'?'Gastos':'Entradas'} / cache local${pending.length?` + ${pending.length} pendente(s)`:''}`,
       listTone:'',
       lastAction:`Abrindo ${tab} a partir do cache`
     });
@@ -2841,17 +2815,23 @@ async function openListFast(tab){
       if(items.length) writeCache(ENTRADAS_CACHE_KEY,items);
     }
     if(error) throw error;
+    const pendingNow=pendingOfflineItems(tab);
+    const remoteIds=new Set(items.map(i=>i.id));
+    const merged=[...pendingNow,...items.filter(i=>!pendingNow.some(p=>p.id===i.id))];
     setDiagnostic({
-      list:sourceLabel || `Supabase / ${tab}`,
+      list:(sourceLabel || `Supabase / ${tab}`)+(pendingNow.length?` + ${pendingNow.length} pendente(s)`:''),
       listTone:'ok',
       lastAction:`Lista de ${tab} atualizada do Supabase`
     });
-    renderListRecords(listEl,items,tab);
+    renderListRecords(listEl,merged,tab);
   }catch(ex){
-    if(cached.length){
-      renderListRecords(listEl,cached,tab);
+    const pendingNow=pendingOfflineItems(tab);
+    const base=cached.length?cached:[];
+    if(base.length || pendingNow.length){
+      const merged=[...pendingNow,...base.filter(i=>!pendingNow.some(p=>p.id===i.id))];
+      renderListRecords(listEl,merged,tab);
       setDiagnostic({
-        list:`${tab==='gastos'?'Gastos':'Entradas'} / cache fallback`,
+        list:`${tab==='gastos'?'Gastos':'Entradas'} / cache fallback${pendingNow.length?` + ${pendingNow.length} pendente(s)`:''}`,
         listTone:'err',
         lastAction:`Lista de ${tab} exibida do cache apos falha remota`
       });
@@ -3048,6 +3028,45 @@ function closeList(){
 function enqueueOffline(tabela,dados){
   S.offlineQ.push({tabela,dados,ts:Date.now()});
   localStorage.setItem('offlineQ',JSON.stringify(S.offlineQ));
+}
+
+async function flushOfflineQueue(){
+  if(_flushRunning || !db || !S.user || !S.offlineQ.length) return;
+  _flushRunning=true;
+  try{
+    const pending=[...S.offlineQ];
+    const synced=[];
+    for(const item of pending){
+      try{
+        const {tabela,dados}=item;
+        const d={...dados,user_id:dados.user_id||S.user.id};
+        if(tabela==='gastos'){
+          await insertLancamento(buildLancamentoFromGasto(d,d.id));
+          await insertLegacyGastoBestEffort(d);
+        }else if(tabela==='entradas'){
+          await insertLancamento(buildLancamentoFromEntrada(d,d.id));
+          await insertLegacyEntradaBestEffort(d);
+        }
+        synced.push(item);
+      }catch(ex){
+        // Chave duplicada (23505) = já existe no banco; considera sincronizado e continua
+        if(String(ex?.code||'').includes('23505') || String(ex?.message||'').toLowerCase().includes('duplicate')){
+          synced.push(item);
+          continue;
+        }
+        // Rede ainda ruim — para aqui e tenta novamente na próxima chamada
+        break;
+      }
+    }
+    if(synced.length){
+      S.offlineQ=S.offlineQ.filter(i=>!synced.includes(i));
+      localStorage.setItem('offlineQ',JSON.stringify(S.offlineQ));
+      setDiagnostic({lastAction:`${synced.length} registro(s) sincronizado(s) com o banco`});
+      if(!S.offlineQ.length) refreshDashboardIfVisible();
+    }
+  }finally{
+    _flushRunning=false;
+  }
 }
 
 function toast(msg,tipo=''){

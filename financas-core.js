@@ -17,6 +17,7 @@ let db = null;
 let authListenerBound = false;
 let authMode = 'login';
 let _tt;
+let _flushRunning = false;
 
 const CATS = [
   {id:'alimentacao',nome:'Alimentação', subs:['Mercado','Restaurante','Delivery','Café','Besteira'],        outros:false},
