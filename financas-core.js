@@ -8,7 +8,7 @@ const ENTRADAS_CACHE_KEY = 'dindin_entradas_cache';
 const CASA_ATUAL_CONFIG_KEY = 'dindin_casa_atual_config';
 const ALYA_CACHE_KEY = 'dindin_alya_cache';
 const DIAGNOSTIC_VISIBLE_KEY = 'dindin_diag_visible';
-const SESSION_RECHECK_MS = 120000;
+const SESSION_RECHECK_MS = 600000; // 10 min — auth local do JWT; revalida com pouca frequência
 const EMBEDDED_SUPABASE_CONFIG = Object.freeze({
   url: 'https://beqzurjtawlbloorbijz.supabase.co',
   anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJlcXp1cmp0YXdsYmxvb3JiaWp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1OTkyMDIsImV4cCI6MjA5MzE3NTIwMn0.hlEgHsH4crMN7xXRuuFK6GjaBpLrWYvS4Y0S3NFFer8',

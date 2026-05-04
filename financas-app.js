@@ -393,10 +393,10 @@ async function runWithRetry(factory,baseMs,label,retryMs=0){
   }
 }
 
-const DASHBOARD_REMOTE_TIMEOUT_MS = 8000;
-const DASHBOARD_REMOTE_RETRY_MS = 12000;
-const LIST_REMOTE_TIMEOUT_MS = 8000;
-const LIST_REMOTE_RETRY_MS = 12000;
+const DASHBOARD_REMOTE_TIMEOUT_MS = 6000;  // cache local garante fallback rápido
+const DASHBOARD_REMOTE_RETRY_MS = 10000;
+const LIST_REMOTE_TIMEOUT_MS = 6000;        // lista mostra cache; não precisa esperar 8s
+const LIST_REMOTE_RETRY_MS = 10000;
 
 function currentMonthStart(){
   const now=new Date();
@@ -1113,8 +1113,15 @@ function setDiagnostic(patch={},options={}){
 }
 
 function setDiagnosticError(error,context=''){
-  const message=diagText(error?.message || error,'Sem erro detalhado');
-  setDiagnostic({lastError:context?`${context}: ${message}`:message});
+  const parts=[];
+  if(error?.code)    parts.push(`código=${error.code}`);
+  if(error?.status)  parts.push(`HTTP=${error.status}`);
+  if(error?.message) parts.push(`msg=${error.message}`);
+  if(error?.details) parts.push(`detalhe=${error.details}`);
+  if(error?.hint)    parts.push(`hint=${error.hint}`);
+  if(!parts.length)  parts.push(String(error));
+  const detail=parts.join(' | ');
+  setDiagnostic({lastError:context?`[${context}] ${detail}`:detail});
 }
 
 function setDiagnosticVisible(visible){
@@ -1142,11 +1149,93 @@ function renderDiagnostic(){
   q('diag-last-action').textContent=diagText(S.diag.lastAction);
   q('diag-last-error').textContent=diagText(S.diag.lastError,'Nenhum erro registrado');
   q('diag-updated').textContent=diagTimeLabel(S.diag.updatedAt);
+  const qEl=q('diag-queue');
+  if(qEl) qEl.textContent=S.offlineQ.length?`${S.offlineQ.length} item(s) aguardando sincronização`:'Fila vazia — tudo sincronizado';
+}
+
+function initDraggableDiagToggle(){
+  const btn=q('diag-toggle');
+  if(!btn) return;
+  // Restaura posição salva
+  try{
+    const saved=JSON.parse(localStorage.getItem('diagBtnPos')||'null');
+    if(saved){ btn.style.top=saved.top; btn.style.left=saved.left; btn.style.right='auto'; btn.style.bottom='auto'; }
+  }catch{}
+  let dragging=false,wasDragging=false,startX=0,startY=0,startL=0,startT=0;
+  btn.addEventListener('pointerdown',e=>{
+    e.preventDefault(); // evita que o iOS intercepte o touch como scroll antes do pointermove
+    dragging=false; wasDragging=false;
+    const r=btn.getBoundingClientRect();
+    startX=e.clientX; startY=e.clientY; startL=r.left; startT=r.top;
+    btn.setPointerCapture(e.pointerId);
+  });
+  btn.addEventListener('pointermove',e=>{
+    const dx=e.clientX-startX, dy=e.clientY-startY;
+    if(!dragging && Math.abs(dx)<6 && Math.abs(dy)<6) return;
+    dragging=true; wasDragging=true;
+    const nl=Math.max(0,Math.min(window.innerWidth-btn.offsetWidth, startL+dx));
+    const nt=Math.max(0,Math.min(window.innerHeight-btn.offsetHeight,startT+dy));
+    btn.style.left=nl+'px'; btn.style.right='auto';
+    btn.style.top=nt+'px';  btn.style.bottom='auto';
+  });
+  btn.addEventListener('pointerup',()=>{
+    if(wasDragging){
+      try{ localStorage.setItem('diagBtnPos',JSON.stringify({top:btn.style.top,left:btn.style.left})); }catch{}
+    }
+    dragging=false;
+  });
+  btn.addEventListener('click',()=>{ if(wasDragging){wasDragging=false;return;} setDiagnosticVisible(true); });
+}
+
+async function pingSupabase(){
+  if(!db||!S.user) return;
+  const pingBtn=q('diag-ping');
+  if(pingBtn){pingBtn.disabled=true;pingBtn.textContent='Testando...';}
+  const t0=Date.now();
+  try{
+    const {error}=await withTimeout(
+      db.from('lancamentos').select('id').eq('user_id',S.user.id).limit(1),
+      20000,'ping lancamentos'
+    );
+    const ms=Date.now()-t0;
+    const msg=error
+      ? `ERRO ${ms}ms — código=${error.code||'?'} msg=${error.message||'?'}${error.hint?` hint=${error.hint}`:''}`
+      : `OK em ${ms}ms`;
+    setDiagnostic({lastAction:`Ping Supabase: ${msg}`});
+    if(error) setDiagnosticError(error,'Ping');
+  }catch(ex){
+    setDiagnostic({lastAction:`Ping timeout após ${Date.now()-t0}ms`});
+    setDiagnosticError(ex,'Ping');
+  }finally{
+    if(pingBtn){pingBtn.disabled=false;pingBtn.textContent='Testar conexão';}
+    renderDiagnostic();
+  }
+}
+
+function copyDiagnostic(){
+  const lines=[
+    `=== DIAGNÓSTICO DINDIN ===`,
+    `Hora: ${new Date().toLocaleString('pt-BR')}`,
+    `Sessão: ${S.diag.auth} | ${S.diag.authDetail}`,
+    `Resumo: ${S.diag.summary}`,
+    `Listas: ${S.diag.list}`,
+    `Fila offline: ${S.offlineQ.length} item(s)`,
+    `Última ação: ${S.diag.lastAction}`,
+    `Último erro: ${S.diag.lastError}`,
+    `Usuário: ${S.user?.email||S.user?.id||'N/A'}`,
+    `Supabase URL: ${resolveSupabaseConfig()?.url||'N/A'}`,
+  ];
+  navigator.clipboard.writeText(lines.join('\n')).then(
+    ()=>toast('Diagnóstico copiado!','ok'),
+    ()=>toast('Não foi possível copiar','err')
+  );
 }
 
 function initDiagnosticMode(){
-  if(q('diag-toggle')) q('diag-toggle').addEventListener('click',()=>setDiagnosticVisible(true));
+  initDraggableDiagToggle();
   if(q('diag-close')) q('diag-close').addEventListener('click',()=>setDiagnosticVisible(false));
+  if(q('diag-ping'))  q('diag-ping').addEventListener('click',pingSupabase);
+  if(q('diag-copy'))  q('diag-copy').addEventListener('click',copyDiagnostic);
   setDiagnostic({
     auth:hasEmbeddedConfig()?'Aguardando autenticacao':'Aguardando configuracao',
     authTone:'',
@@ -1276,6 +1365,8 @@ function setupNav(){
     btn.addEventListener('pointerup',()=>clearTimeout(t));
     btn.addEventListener('pointerleave',()=>clearTimeout(t));
     btn.addEventListener('click',()=>{
+      // Sempre fecha a lista se estiver aberta ao tocar na nav
+      closeList();
       if(btn.classList.contains('active')){
         if(tabSupportsList(btn.dataset.tab)) openListFast(btn.dataset.tab);
         else if(btn.dataset.tab==='dashboard') refreshDashboard('manual');
@@ -1496,6 +1587,8 @@ async function loadCustomSubs(){
 }
 
 function buildLancamentoFromGasto(gasto,legacyId){
+  // Retorna um único lancamento — usado para edições/updates.
+  // Para inserções com parcelamento use buildLancamentosFromGasto.
   return {
     user_id:gasto.user_id,
     tipo:'saida',
@@ -1511,6 +1604,45 @@ function buildLancamentoFromGasto(gasto,legacyId){
     banco_referencia:gasto.banco,
     observacoes:`Origem app: gastos; legado_id=${legacyId}; tipo_pagamento=${gasto.tipo_pagamento}`,
   };
+}
+
+// Retorna um array de lancamentos: 1 item para à vista, N itens para parcelamentos.
+// Cada parcela tem valor/N e data_evento deslocada em (i) meses.
+function buildLancamentosFromGasto(gasto,legacyId){
+  const n=(gasto.tipo_pagamento && gasto.tipo_pagamento!=='a_vista')
+    ? (parseInt(gasto.tipo_pagamento)||1)
+    : 1;
+  const base={
+    user_id:gasto.user_id,
+    tipo:'saida',
+    proprietario_economico:gasto.dono==='mae'?'mae':'eu',
+    contexto:gasto.dono==='mae'?'mae':(gasto.categoria==='Moradia'?'casa_atual':'pessoal'),
+    descricao:gasto.subcategoria || gasto.categoria || (gasto.dono==='mae'?'Gasto Mae':'Gasto'),
+    categoria:gasto.categoria,
+    subcategoria:gasto.subcategoria,
+    necessidade:gasto.necessidade,
+    forma_pagamento:gasto.forma_pagamento,
+    banco_referencia:gasto.banco,
+  };
+  if(n<=1){
+    return [{
+      ...base,
+      valor:gasto.valor,
+      data_evento:gasto.data,
+      observacoes:`Origem app: gastos; legado_id=${legacyId}; tipo_pagamento=${gasto.tipo_pagamento}`,
+    }];
+  }
+  const valorParcela=Math.round((gasto.valor/n)*100)/100;
+  return Array.from({length:n},(_,i)=>{
+    const dt=new Date(gasto.data);
+    dt.setMonth(dt.getMonth()+i);
+    return {
+      ...base,
+      valor:valorParcela,
+      data_evento:dt.toISOString(),
+      observacoes:`Origem app: gastos; legado_id=${legacyId}; tipo_pagamento=${gasto.tipo_pagamento}; parcela=${i+1}/${n}`,
+    };
+  });
 }
 
 function buildLancamentoFromEntrada(entrada,legacyId){
@@ -2735,6 +2867,12 @@ function openDetail(rec,tab){
 }
 
 async function openListFast(tab){
+  // Abre o sheet imediatamente — feedback visual sem esperar rede ou sessão
+  const listEl=q('sheet-list'),titleEl=q('sheet-title');
+  titleEl.textContent=tab==='gastos'?'Meus Gastos':'Minhas Entradas';
+  q('list-overlay').classList.add('show');
+  q('list-sheet').classList.add('show');
+
   if(!db || !(await ensureActiveSession())){
     setDiagnostic({
       list:'Sem sessao para abrir listas',
@@ -2742,14 +2880,11 @@ async function openListFast(tab){
       lastAction:`Tentativa de abrir ${tab} sem sessao`
     });
     toast('Entre novamente para abrir seus registros.','err');
+    closeList();
     return;
   }
-  const listEl=q('sheet-list'),titleEl=q('sheet-title');
   const cacheKey=tab==='gastos'?GASTOS_CACHE_KEY:ENTRADAS_CACHE_KEY;
   const cached=readCache(cacheKey,[]);
-  titleEl.textContent=tab==='gastos'?'Meus Gastos':'Minhas Entradas';
-  q('list-overlay').classList.add('show');
-  q('list-sheet').classList.add('show');
 
   const pending=pendingOfflineItems(tab);
   if(cached.length || pending.length){
@@ -3065,7 +3200,8 @@ async function flushOfflineQueue(){
         const {tabela,dados}=item;
         const d={...dados,user_id:dados.user_id||S.user.id};
         if(tabela==='gastos'){
-          await insertLancamento(buildLancamentoFromGasto(d,d.id));
+          const parcelas=buildLancamentosFromGasto(d,d.id);
+          for(const p of parcelas) await insertLancamento(p);
           await insertLegacyGastoBestEffort(d);
         }else if(tabela==='entradas'){
           await insertLancamento(buildLancamentoFromEntrada(d,d.id));

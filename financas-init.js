@@ -15,4 +15,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   await bootSupabase();
 });
 
-if('serviceWorker' in navigator){navigator.serviceWorker.register('./financas-sw.js').catch(()=>{});}
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./financas-sw.js').catch(()=>{});
+  // Quando um novo SW ativa, recarrega a página automaticamente para garantir
+  // que o usuário sempre veja os arquivos atualizados (sem precisar fechar manualmente).
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{ window.location.reload(); });
+}
