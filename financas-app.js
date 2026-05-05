@@ -393,10 +393,10 @@ async function runWithRetry(factory,baseMs,label,retryMs=0){
   }
 }
 
-const DASHBOARD_REMOTE_TIMEOUT_MS = 6000;  // cache local garante fallback rápido
-const DASHBOARD_REMOTE_RETRY_MS = 10000;
-const LIST_REMOTE_TIMEOUT_MS = 6000;        // lista mostra cache; não precisa esperar 8s
-const LIST_REMOTE_RETRY_MS = 10000;
+const DASHBOARD_REMOTE_TIMEOUT_MS = 5000;  // falha rápido → mostra cache imediatamente
+const DASHBOARD_REMOTE_RETRY_MS = 0;       // sem retry: DB pausado não vai responder na 2ª tentativa
+const LIST_REMOTE_TIMEOUT_MS = 5000;       // idem — cache local é o fallback garantido
+const LIST_REMOTE_RETRY_MS = 0;
 
 function currentMonthStart(){
   const now=new Date();
@@ -1193,18 +1193,28 @@ async function pingSupabase(){
   if(pingBtn){pingBtn.disabled=true;pingBtn.textContent='Testando...';}
   const t0=Date.now();
   try{
-    const {error}=await withTimeout(
-      db.from('lancamentos').select('id').eq('user_id',S.user.id).limit(1),
-      20000,'ping lancamentos'
-    );
-    const ms=Date.now()-t0;
-    const msg=error
-      ? `ERRO ${ms}ms — código=${error.code||'?'} msg=${error.message||'?'}${error.hint?` hint=${error.hint}`:''}`
-      : `OK em ${ms}ms`;
-    setDiagnostic({lastAction:`Ping Supabase: ${msg}`});
-    if(error) setDiagnosticError(error,'Ping');
+    // Testa auth primeiro (independente do banco de dados)
+    const {data:authData,error:authErr}=await withTimeout(db.auth.getUser(),5000,'auth ping');
+    const authOk=!authErr && authData?.user;
+    // Testa o banco (pode estar pausado no plano gratuito)
+    let dbMsg='';
+    try{
+      const {error}=await withTimeout(
+        db.from('lancamentos').select('id').eq('user_id',S.user.id).limit(1),
+        8000,'ping lancamentos'
+      );
+      const ms=Date.now()-t0;
+      dbMsg=error
+        ? `BD: ERRO ${ms}ms (${error.code||error.message||'?'})`
+        : `BD: OK em ${ms}ms`;
+    }catch(dbEx){
+      const ms=Date.now()-t0;
+      dbMsg=`BD: TIMEOUT ${ms}ms — provável banco pausado (supabase.com → Restore project)`;
+    }
+    const authMsg=authOk?`Auth: OK (${authData.user.email||authData.user.id})`:`Auth: ERRO (${authErr?.message||'?'})`;
+    setDiagnostic({lastAction:`${authMsg} | ${dbMsg}`});
   }catch(ex){
-    setDiagnostic({lastAction:`Ping timeout após ${Date.now()-t0}ms`});
+    setDiagnostic({lastAction:`Ping falhou: ${ex?.message||ex}`});
     setDiagnosticError(ex,'Ping');
   }finally{
     if(pingBtn){pingBtn.disabled=false;pingBtn.textContent='Testar conexão';}
