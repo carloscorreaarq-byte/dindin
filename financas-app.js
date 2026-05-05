@@ -393,9 +393,9 @@ async function runWithRetry(factory,baseMs,label,retryMs=0){
   }
 }
 
-const DASHBOARD_REMOTE_TIMEOUT_MS = 5000;  // falha rápido → mostra cache imediatamente
-const DASHBOARD_REMOTE_RETRY_MS = 0;       // sem retry: DB pausado não vai responder na 2ª tentativa
-const LIST_REMOTE_TIMEOUT_MS = 5000;       // idem — cache local é o fallback garantido
+const DASHBOARD_REMOTE_TIMEOUT_MS = 12000; // rede móvel pode ser lenta
+const DASHBOARD_REMOTE_RETRY_MS = 0;       // sem retry — cache local é fallback garantido
+const LIST_REMOTE_TIMEOUT_MS = 12000;      // idem
 const LIST_REMOTE_RETRY_MS = 0;
 
 function currentMonthStart(){
@@ -1188,33 +1188,52 @@ function initDraggableDiagToggle(){
 }
 
 async function pingSupabase(){
-  if(!db||!S.user) return;
+  if(!db) return;
   const pingBtn=q('diag-ping');
   if(pingBtn){pingBtn.disabled=true;pingBtn.textContent='Testando...';}
-  const t0=Date.now();
+  const lines=[];
   try{
-    // Testa auth primeiro (independente do banco de dados)
-    const {data:authData,error:authErr}=await withTimeout(db.auth.getUser(),5000,'auth ping');
-    const authOk=!authErr && authData?.user;
-    // Testa o banco (pode estar pausado no plano gratuito)
-    let dbMsg='';
+    // 1. Sessão local (sem rede — lê do localStorage)
+    const {data:sessData}=await db.auth.getSession();
+    const sess=sessData?.session;
+    if(sess?.user){
+      const exp=sess.expires_at ? new Date(sess.expires_at*1000).toLocaleTimeString('pt-BR') : '?';
+      lines.push(`Sessão local: OK (${sess.user.email||sess.user.id}) expira ${exp}`);
+    } else {
+      lines.push('Sessão local: nenhuma (faça login novamente)');
+    }
+    // 2. Banco — tenta lancamentos, depois gastos como fallback
+    const t0=Date.now();
+    let dbOk=false;
     try{
-      const {error}=await withTimeout(
-        db.from('lancamentos').select('id').eq('user_id',S.user.id).limit(1),
-        8000,'ping lancamentos'
+      const {data,error}=await withTimeout(
+        db.from('lancamentos').select('id').eq('user_id',S.user?.id||'').limit(1),
+        12000,'lancamentos'
       );
       const ms=Date.now()-t0;
-      dbMsg=error
-        ? `BD: ERRO ${ms}ms (${error.code||error.message||'?'})`
-        : `BD: OK em ${ms}ms`;
-    }catch(dbEx){
+      if(error) lines.push(`BD lancamentos: ERRO ${ms}ms — ${error.code||''} ${error.message||''}`);
+      else { lines.push(`BD lancamentos: OK em ${ms}ms (${data?.length??0} linha(s))`); dbOk=true; }
+    }catch(ex){
       const ms=Date.now()-t0;
-      dbMsg=`BD: TIMEOUT ${ms}ms — provável banco pausado (supabase.com → Restore project)`;
+      lines.push(`BD lancamentos: TIMEOUT ${ms}ms`);
     }
-    const authMsg=authOk?`Auth: OK (${authData.user.email||authData.user.id})`:`Auth: ERRO (${authErr?.message||'?'})`;
-    setDiagnostic({lastAction:`${authMsg} | ${dbMsg}`});
+    if(!dbOk){
+      const t1=Date.now();
+      try{
+        const {data,error}=await withTimeout(
+          db.from('gastos').select('id').eq('user_id',S.user?.id||'').limit(1),
+          12000,'gastos'
+        );
+        const ms=Date.now()-t1;
+        if(error) lines.push(`BD gastos: ERRO ${ms}ms — ${error.code||''} ${error.message||''}`);
+        else lines.push(`BD gastos: OK em ${ms}ms (${data?.length??0} linha(s))`);
+      }catch(ex){
+        lines.push(`BD gastos: TIMEOUT ${Date.now()-t1}ms`);
+      }
+    }
+    setDiagnostic({lastAction:lines.join(' | ')});
   }catch(ex){
-    setDiagnostic({lastAction:`Ping falhou: ${ex?.message||ex}`});
+    setDiagnostic({lastAction:`Ping erro inesperado: ${ex?.message||ex}`});
     setDiagnosticError(ex,'Ping');
   }finally{
     if(pingBtn){pingBtn.disabled=false;pingBtn.textContent='Testar conexão';}
@@ -2925,22 +2944,27 @@ async function openListFast(tab){
     let error=null;
     let sourceLabel='';
     if(tab==='gastos'){
-      const modernRes=await runWithRetry(
-        ()=>db
-          .from('lancamentos')
-          .select('id,user_id,valor,categoria,subcategoria,necessidade,data_evento,proprietario_economico,forma_pagamento,banco_referencia,descricao,observacoes')
-          .eq('user_id',S.user.id)
-          .eq('tipo','saida')
-          .order('data_evento',{ascending:false})
-          .limit(100),
-        LIST_REMOTE_TIMEOUT_MS,
-        'lista de gastos em lancamentos',
-        LIST_REMOTE_RETRY_MS
-      );
-      items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
-      error=modernRes.error;
-      sourceLabel='Supabase / gastos via lancamentos';
-      if((error || !items.length) && !modernRes.error){
+      // Tenta lancamentos primeiro; se falhar por qualquer motivo, cai para gastos legado
+      try{
+        const modernRes=await runWithRetry(
+          ()=>db
+            .from('lancamentos')
+            .select('id,user_id,valor,categoria,subcategoria,necessidade,data_evento,proprietario_economico,forma_pagamento,banco_referencia,descricao,observacoes')
+            .eq('user_id',S.user.id)
+            .eq('tipo','saida')
+            .order('data_evento',{ascending:false})
+            .limit(100),
+          LIST_REMOTE_TIMEOUT_MS,
+          'lista de gastos em lancamentos',
+          LIST_REMOTE_RETRY_MS
+        );
+        if(!modernRes.error && modernRes.data?.length){
+          items=modernRes.data.map(buildLegacyLikeRecordFromLancamento);
+          sourceLabel='Supabase / lancamentos';
+        }
+      }catch(_){ /* timeout ou erro → tenta tabela legada */ }
+      // Fallback para gastos legado: tabela nao existe, erro, timeout ou resultado vazio
+      if(!items.length){
         const legacyRes=await runWithRetry(
           ()=>db.from('gastos').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
           LIST_REMOTE_TIMEOUT_MS,
@@ -2949,26 +2973,31 @@ async function openListFast(tab){
         );
         items=legacyRes.data||[];
         error=legacyRes.error;
-        sourceLabel='Supabase / gastos legado';
+        sourceLabel='Supabase / gastos';
       }
       if(items.length) writeCache(GASTOS_CACHE_KEY,items);
     }else{
-      const modernRes=await runWithRetry(
-        ()=>db
-          .from('lancamentos')
-          .select('id,user_id,valor,subcategoria,data_evento,descricao,observacoes')
-          .eq('user_id',S.user.id)
-          .eq('tipo','entrada')
-          .order('data_evento',{ascending:false})
-          .limit(100),
-        LIST_REMOTE_TIMEOUT_MS,
-        'lista de entradas em lancamentos',
-        LIST_REMOTE_RETRY_MS
-      );
-      items=(modernRes.data||[]).map(buildLegacyLikeRecordFromLancamento);
-      error=modernRes.error;
-      sourceLabel='Supabase / entradas via lancamentos';
-      if((error || !items.length) && !modernRes.error){
+      // Tenta lancamentos primeiro; se falhar, cai para entradas legado
+      try{
+        const modernRes=await runWithRetry(
+          ()=>db
+            .from('lancamentos')
+            .select('id,user_id,valor,subcategoria,data_evento,descricao,observacoes')
+            .eq('user_id',S.user.id)
+            .eq('tipo','entrada')
+            .order('data_evento',{ascending:false})
+            .limit(100),
+          LIST_REMOTE_TIMEOUT_MS,
+          'lista de entradas em lancamentos',
+          LIST_REMOTE_RETRY_MS
+        );
+        if(!modernRes.error && modernRes.data?.length){
+          items=modernRes.data.map(buildLegacyLikeRecordFromLancamento);
+          sourceLabel='Supabase / lancamentos';
+        }
+      }catch(_){ /* timeout ou erro → tenta tabela legada */ }
+      // Fallback para entradas legado
+      if(!items.length){
         const legacyRes=await runWithRetry(
           ()=>db.from('entradas').select('*').eq('user_id',S.user.id).order('data',{ascending:false}).limit(100),
           LIST_REMOTE_TIMEOUT_MS,
